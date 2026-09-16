@@ -1,0 +1,4 @@
+[client]
+# Désactive le menu de navigation automatique dans la sidebar.
+# On construit à la place un menu horizontal maison (voir modules/topnav.py).
+showSidebarNavigation = false
