@@ -5,3 +5,5 @@ numpy
 Pillow
 tifffile
 pandas
+pymongo
+bcrypt

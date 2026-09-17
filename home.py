@@ -1,5 +1,5 @@
 """
-Home.py — Page d'accueil de l'application ISEN / LabISEN HSI.
+Page d'accueil de l'application ISEN / LabISEN HSI.
 
 C'est le fichier "point d'entrée" de l'appli Streamlit multipage :
 il est affiché par défaut au lancement, avant tout autre onglet.
@@ -11,7 +11,6 @@ import streamlit as st
 # --- Configuration générale de la page (doit être en tout premier appel Streamlit) ---
 st.set_page_config(
     page_title="ISEN HSI App",
-    # page_icon="🌾",
     layout="wide",
 )
 
@@ -22,21 +21,30 @@ render_topnav()
 
 # --- Logo ISEN / LabISEN ---
 # Placez le fichier logo dans assets/isen_logo.png à la racine du projet.
-LOGO_PATH = Path(__file__).parent / "assets" / "isen_logo.jpg"
+LOGO_PATH = Path(__file__).parent / "assets"
+LOGO_ISEN_PATH = LOGO_PATH / "isen_logo.jpg"
+LOGO_LABISEN_PATH = LOGO_PATH / "labisen_logo.png"
 
-col_logo, col_title = st.columns([1, 4])
+# Trois colonnes : logo gauche (1), titre central (4), logo droite (1)
+col_left, col_title, col_right = st.columns([1, 4, 1], vertical_alignment="center")
 
-with col_logo:
-    if LOGO_PATH.exists():
-        st.image(str(LOGO_PATH), width=150)
+with col_left:
+    if LOGO_ISEN_PATH.exists():
+        st.image(str(LOGO_ISEN_PATH), width=150)
     else:
-        # Ne bloque pas l'affichage si le logo n'a pas encore été déposé
-        st.warning("Logo non trouvé : ajoutez-le dans assets/isen_logo.jpg")
-
+        st.warning("Logo ISEN manquant")
+        
 with col_title:
-    st.title("Application HSI — ISEN / LabISEN")
+    st.title("Application HSI - ISEN / LabISEN")
+
+with col_right:
+    if LOGO_LABISEN_PATH.exists():
+        st.image(str(LOGO_LABISEN_PATH), width=130)
+    else:
+        st.warning("Logo LabISEN manquant")
 
 st.divider()
+
 
 # --- Texte de présentation (US-01 : 2 à 3 paragraphes) ---
 st.markdown(

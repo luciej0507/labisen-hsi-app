@@ -69,7 +69,7 @@ st.markdown(
     - le masque d'annotation `.png` et le fichier `.json` associé sont présents dans le dossier 
       `Annotation/`.
 
-    > 🚧 **À définir avec l'équipe** : l'inférence nécessite-t-elle que les 3 splits
+    > 🚧 **À définir** : l'inférence nécessite-t-elle que les 3 splits
     > (Train / Test / Val) soient complets, ou seulement le split concerné (ex : Test) ?
     """
 )

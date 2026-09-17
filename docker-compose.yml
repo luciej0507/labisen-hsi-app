@@ -1,0 +1,21 @@
+# Lance une instance MongoDB locale pour le développement.
+#
+# Démarrer :   docker compose up -d
+# Arrêter :    docker compose down
+# Voir les logs : docker compose logs -f mongo
+#
+# Les données sont conservées entre les redémarrages grâce au volume "mongo_data"
+# (elles ne sont perdues que si tu fais "docker compose down -v").
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: isen_hsi_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
