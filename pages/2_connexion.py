@@ -1,55 +1,55 @@
 """
-Page "Connexion" : choix entre connexion Admin et connexion User.
+Page Connexion.
 
-Les formulaires de connexion réels (vérification username/mot de passe)
-seront branchés plus tard sur modules/auth.py,
-une fois la base users en place.
+Formulaires de connexion Admin et User. Utilise modules/auth.py pour
+verifier les identifiants et gerer la session.
 """
 
 import streamlit as st
 
+from modules.auth import authenticate, login_user
+from modules.topnav import render_topnav
+
 st.set_page_config(page_title="Connexion")
 
-from modules.topnav import render_topnav
 render_topnav()
-
-
 
 st.title("Connexion")
 
-st.markdown("Choisissez votre type de connexion pour accéder à votre espace.")
+st.markdown("Choisissez votre type de connexion pour acceder à votre espace.")
 
-col_admin, col_user = st.columns(2)
+tab_admin, tab_user = st.tabs(["Administrateur", "Utilisateur"])
 
-with col_admin:
-    st.subheader("Administrateur")
-    st.write("Gestion des utilisateurs, suivi et reporting.")
-    if st.button("Connexion Admin", use_container_width=True):
-        st.session_state["connexion_type"] = "admin"
+with tab_admin:
+    with st.form("form_login_admin"):
+        admin_username = st.text_input("Nom d'utilisateur", key="admin_username")
+        admin_password = st.text_input(
+            "Mot de passe", type="password", key="admin_password"
+        )
+        admin_submit = st.form_submit_button("Se connecter")
 
-with col_user:
-    st.subheader("Utilisateur")
-    st.write("Acquisition et gestion des bases de données.")
-    if st.button("Connexion User", use_container_width=True):
-        st.session_state["connexion_type"] = "user"
+    if admin_submit:
+        user = authenticate(admin_username, admin_password)
+        if user is not None and user["role"] == "admin":
+            login_user(user)
+            st.success("Connexion reussie.")
+            st.switch_page("pages/3_admin_dashboard.py")
+        else:
+            st.error("Identifiants incorrects.")
 
-st.divider()
+with tab_user:
+    with st.form("form_login_user"):
+        user_username = st.text_input("Nom d'utilisateur", key="user_username")
+        user_password = st.text_input(
+            "Mot de passe", type="password", key="user_password"
+        )
+        user_submit = st.form_submit_button("Se connecter")
 
-# --- Redirection vers le bon formulaire selon le choix effectué ---
-connexion_type = st.session_state.get("connexion_type")
-
-if connexion_type == "admin":
-    st.info(
-        "🚧 Formulaire de connexion Admin à venir "
-        "(sera branché sur pages/3_Admin_Dashboard.py + modules/auth.py)."
-    )
-    # Une fois la page Admin créée, décommenter :
-    # st.switch_page("pages/3_Admin_Dashboard.py")
-
-elif connexion_type == "user":
-    st.info(
-        "🚧 Formulaire de connexion User à venir "
-        "(sera branché sur pages/4_User_Dashboard.py + modules/auth.py)."
-    )
-    # Une fois la page User créée, décommenter :
-    # st.switch_page("pages/4_User_Dashboard.py")
+    if user_submit:
+        user = authenticate(user_username, user_password)
+        if user is not None and user["role"] == "user":
+            login_user(user)
+            st.success("Connexion reussie.")
+            st.info("Espace utilisateur non encore disponible.")
+        else:
+            st.error("Identifiants incorrects.")

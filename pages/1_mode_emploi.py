@@ -17,7 +17,6 @@ st.markdown(
     """
     Cette page décrit les prérequis à respecter avant d'utiliser l'application,
     notamment le format attendu des fichiers et les règles de validation des données.
-    Elle est accessible sans connexion.
     """
 )
 
@@ -78,7 +77,7 @@ st.header("3. Accès à l'application")
 
 st.markdown(
     """
-    - La consultation du **Mot d'accueil** et du **Mode d'emploi** ne nécessite aucune
+    - La consultation des menu **Accueil** et **Mode d'emploi** ne nécessite aucune
       connexion.
     - L'accès aux données et aux fonctionnalités de gestion nécessite de se connecter via
       l'onglet **Connexion**, en tant qu'Administrateur ou Utilisateur.

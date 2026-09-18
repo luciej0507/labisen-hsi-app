@@ -12,7 +12,7 @@ import streamlit as st
 # Liste des pages du menu : (chemin du fichier, libellé affiché)
 # Le chemin est relatif au fichier d'entrée de l'appli (Home.py).
 PAGES = [
-    ("home.py", "Mot d'accueil"),
+    ("home.py", "Accueil"),
     ("pages/1_mode_emploi.py", "Mode d'emploi"),
     ("pages/2_connexion.py", "Connexion"),
     # Ajoute ici les futures pages, ex :

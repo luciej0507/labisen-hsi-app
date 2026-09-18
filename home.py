@@ -58,7 +58,7 @@ st.markdown(
     images RGB, annotations), et de préparer ces données en vue de leur utilisation pour
     l'entraînement et l'inférence de modèles.
 
-    Pour commencer, rendez-vous dans l'onglet **Mode d'emploi** (menu à gauche) afin de
+    Pour commencer, rendez-vous dans l'onglet **Mode d'emploi** afin de
     connaître les prérequis, puis dans l'onglet **Connexion** pour accéder à votre espace
     personnel.
     """
