@@ -1,5 +1,5 @@
 """
-Authentification des utilisateurs.
+auth.py : Authentification des utilisateurs.
 
 Vérifie les identifiants saisis contre ceux stockés dans MongoDB, et gère
 la session Streamlit (qui est connecté, avec quel rôle).

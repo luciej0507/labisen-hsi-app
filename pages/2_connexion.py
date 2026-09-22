@@ -1,8 +1,8 @@
 """
 Page Connexion.
 
-Formulaires de connexion Admin et User. Utilise modules/auth.py pour
-verifier les identifiants et gerer la session.
+Formulaires de connexion Admin et User cote a cote. Utilise modules/auth.py
+pour verifier les identifiants et gerer la session.
 """
 
 import streamlit as st
@@ -18,38 +18,28 @@ st.title("Connexion")
 
 st.markdown("Choisissez votre type de connexion pour acceder à votre espace.")
 
-tab_admin, tab_user = st.tabs(["Administrateur", "Utilisateur"])
 
-with tab_admin:
-    with st.form("form_login_admin"):
-        admin_username = st.text_input("Nom d'utilisateur", key="admin_username")
-        admin_password = st.text_input(
-            "Mot de passe", type="password", key="admin_password"
-        )
-        admin_submit = st.form_submit_button("Se connecter")
+def formulaire(titre, role, page):
+    st.subheader(titre)
+    with st.form("form_login_" + role):
+        username = st.text_input("Nom d'utilisateur", key=role + "_username")
+        password = st.text_input("Mot de passe", type="password", key=role + "_password")
+        submit = st.form_submit_button("Se connecter")
 
-    if admin_submit:
-        user = authenticate(admin_username, admin_password)
-        if user is not None and user["role"] == "admin":
+    if submit:
+        user = authenticate(username, password)
+        if user is not None and user["role"] == role:
             login_user(user)
             st.success("Connexion reussie.")
-            st.switch_page("pages/3_admin_dashboard.py")
+            st.switch_page(page)
         else:
             st.error("Identifiants incorrects.")
 
-with tab_user:
-    with st.form("form_login_user"):
-        user_username = st.text_input("Nom d'utilisateur", key="user_username")
-        user_password = st.text_input(
-            "Mot de passe", type="password", key="user_password"
-        )
-        user_submit = st.form_submit_button("Se connecter")
 
-    if user_submit:
-        user = authenticate(user_username, user_password)
-        if user is not None and user["role"] == "user":
-            login_user(user)
-            st.success("Connexion reussie.")
-            st.info("Espace utilisateur non encore disponible.")
-        else:
-            st.error("Identifiants incorrects.")
+col_admin, col_user = st.columns(2)
+
+with col_admin:
+    formulaire("Administrateur", "admin", "pages/3_admin_dashboard.py")
+
+with col_user:
+    formulaire("Utilisateur", "user", "pages/4_user_dashboard.py")
