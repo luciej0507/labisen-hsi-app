@@ -68,7 +68,7 @@ st.markdown(
     - le masque d'annotation `.png` et le fichier `.json` associé sont présents dans le dossier 
       `Annotation/`.
 
-    > 🚧 **À définir** : l'inférence nécessite-t-elle que les 3 splits
+    > **À définir** : l'inférence nécessite-t-elle que les 3 splits
     > (Train / Test / Val) soient complets, ou seulement le split concerné (ex : Test) ?
     """
 )
@@ -77,7 +77,7 @@ st.header("3. Accès à l'application")
 
 st.markdown(
     """
-    - La consultation des menu **Accueil** et **Mode d'emploi** ne nécessite aucune
+    - La consultation des menus **Accueil** et **Mode d'emploi** ne nécessite aucune
       connexion.
     - L'accès aux données et aux fonctionnalités de gestion nécessite de se connecter via
       l'onglet **Connexion**, en tant qu'Administrateur ou Utilisateur.

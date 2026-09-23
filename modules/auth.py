@@ -37,6 +37,17 @@ def authenticate(username: str, password: str) -> Optional[dict]:
     return None
 
 
+def authenticate_with_role(username: str, password: str, expected_role: str) -> Optional[dict]:
+    """
+    Authentifie l'utilisateur et verifie qu'il a bien le role attendu.
+    Renvoie le user si les identifiants sont corrects et que le role
+    correspond, sinon None.
+    """
+    user = authenticate(username, password)
+    if user is not None and user.get("role") == expected_role:
+        return user
+    return None
+
 def login_user(user: dict) -> None:
     """Enregistre l'utilisateur connecté dans la session Streamlit."""
     st.session_state["logged_in"] = True

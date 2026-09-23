@@ -7,7 +7,7 @@ pour verifier les identifiants et gerer la session.
 
 import streamlit as st
 
-from modules.auth import authenticate, login_user
+from modules.auth import authenticate_with_role, login_user
 from modules.topnav import render_topnav
 
 st.set_page_config(page_title="Connexion")
@@ -16,7 +16,7 @@ render_topnav()
 
 st.title("Connexion")
 
-st.markdown("Choisissez votre type de connexion pour acceder à votre espace.")
+st.markdown("Choisissez votre type de connexion pour accéder à votre espace.")
 
 
 def formulaire(titre, role, page):
@@ -27,10 +27,10 @@ def formulaire(titre, role, page):
         submit = st.form_submit_button("Se connecter")
 
     if submit:
-        user = authenticate(username, password)
-        if user is not None and user["role"] == role:
+        user = authenticate_with_role(username, password, role)
+        if user is not None:
             login_user(user)
-            st.success("Connexion reussie.")
+            st.success("Connexion réussie.")
             st.switch_page(page)
         else:
             st.error("Identifiants incorrects.")

@@ -4,3 +4,4 @@ __pycache__/
 assets/
 .env
 memo.txt
+dump_mongo/

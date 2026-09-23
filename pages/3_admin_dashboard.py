@@ -4,16 +4,17 @@
 Accessible uniquement aux comptes avec le role admin. Contient les
 onglets de gestion des utilisateurs : ajout (unitaire ou import CSV),
 comptes utilisateurs (consultation, modification, suppression), reporting.
+
+Cette page ne contient que de l'affichage Streamlit et l'appel aux
+fonctions de modules/users.py et modules/user_import.py. La logique
+metier (validation, ecriture en base) vit dans ces modules pour rester
+testable independamment de Streamlit.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
-
-import bcrypt
 import streamlit as st
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo.errors import DuplicateKeyError
 
-from modules.auth import get_current_role, logout_user, require_role
+from modules.auth import logout_user, require_role
 from modules.db_mongo import get_users_collection
 from modules.flash import flash, render_flash
 from modules.topnav import render_topnav
@@ -22,10 +23,20 @@ from modules.user_import import (
     build_recap_csv,
     build_template_csv,
     clean_dataframe,
-    generate_temp_password,
     parse_csv,
     parse_datasets,
     validate_rows,
+)
+from modules.users import (
+    create_user,
+    create_users_from_rows,
+    delete_blocked_reason,
+    delete_user,
+    ensure_username_index,
+    format_date,
+    update_user,
+    validate_new_user,
+    validate_user_update,
 )
 
 st.set_page_config(page_title="Espace Admin")
@@ -36,60 +47,37 @@ require_role("admin")
 
 
 # ---------------------------------------------------------------------------
-# Etat de session propre à cette page
+# Etat de session propre a cette page
 # ---------------------------------------------------------------------------
 
-# ajout_form_id : compteur qui change les clés des widgets du formulaire
-# d'ajout, ce qui le remet à zéro (nouveau formulaire vierge).
+# ajout_form_id : compteur qui change les cles des widgets du formulaire
+# d'ajout, ce qui le remet a zero (nouveau formulaire vierge).
 st.session_state.setdefault("ajout_form_id", 0)
-# ajout_created : récapitulatif du dernier compte créé (None si aucun).
+# ajout_created : recapitulatif du dernier compte cree (None si aucun).
 st.session_state.setdefault("ajout_created", None)
-# import_id : même principe pour le file_uploader et l'éditeur de l'import CSV.
+# import_id : meme principe pour le file_uploader et l'editeur de l'import CSV.
 st.session_state.setdefault("import_id", 0)
 # import_result : bilan du dernier import CSV (None si aucun).
 st.session_state.setdefault("import_result", None)
 
 
 # ---------------------------------------------------------------------------
-# Fonctions utilitaires
+# Cache Streamlit autour de la logique metier
 # ---------------------------------------------------------------------------
 
 
 @st.cache_resource
-def ensure_username_index() -> bool:
+def ensure_username_index_once() -> bool:
     """
-    Crée (une fois par process) un index unique sur username, pour que
-    MongoDB refuse lui-même les doublons même en cas de clics simultanés.
-    Retourne False si l'index n'a pas pu être créé (doublons déjà présents
-    en base, par exemple) : l'application continue alors de fonctionner
-    avec ses vérifications habituelles.
+    Enveloppe Streamlit autour de ensure_username_index (modules/users.py),
+    pour que l'index ne soit créé qu'une seule fois par processus.
     """
-    try:
-        get_users_collection().create_index("username", unique=True)
-        return True
-    except PyMongoError:
-        return False
+    return ensure_username_index(get_users_collection())
 
 
-def hash_password(password: str) -> str:
-    """Hash bcrypt du mot de passe, prêt à être stocké en base."""
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def format_date(value) -> str:
-    """Date au format JJ/MM/AAAA"""
-    if isinstance(value, datetime):
-        return value.strftime("%d/%m/%Y")
-    return str(value) if value else ""
-
-
-def delete_blocked_reason(users, user: dict, current_username: str) -> Optional[str]:
-    """Retourne la raison qui interdit la suppression, ou None si c'est permis."""
-    if user.get("username") == current_username:
-        return "Vous ne pouvez pas supprimer votre propre compte."
-    if user.get("role") == "admin" and users.count_documents({"role": "admin"}) <= 1:
-        return "Impossible de supprimer le dernier compte admin."
-    return None
+# ---------------------------------------------------------------------------
+# Boite de dialogue de suppression
+# ---------------------------------------------------------------------------
 
 
 @st.dialog("Confirmer la suppression")
@@ -124,8 +112,7 @@ def dialog_delete_user(username: str) -> None:
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
         if st.button("Confirmer la suppression", type="primary", width="stretch"):
-            result = users.delete_one({"_id": user["_id"]})
-            if result.deleted_count == 1:
+            if delete_user(users, user["_id"]):
                 flash("success", "Compte supprimé avec succès : " + username, "comptes")
             else:
                 flash("error", "Le compte n'a pas pu être supprimé.", "comptes")
@@ -143,12 +130,12 @@ def dialog_delete_user(username: str) -> None:
 def render_add_single(users) -> None:
     created = st.session_state.get("ajout_created")
 
-    # Compte tout juste créé : récapitulatif à la place du formulaire.
+    # Compte tout juste cree : recapitulatif a la place du formulaire.
     if created:
-        st.success("Compte créé avec succès : " + created["username"])
+        st.success("Compte crée avec succès : " + created["username"])
         st.write(
             f"Nom : {created['prenom']} {created['nom']}  \n"
-            f"Rôle : {created['role']}  \n"
+            f"Role : {created['role']}  \n"
             f"Datasets autorisés : {', '.join(created['datasets_access']) or 'aucun'}"
         )
         if st.button("Ajouter un nouvel utilisateur", type="primary"):
@@ -161,7 +148,7 @@ def render_add_single(users) -> None:
 
     with st.form(f"form_ajout_user_{fid}"):
         new_nom = st.text_input("Nom", key=f"ajout_nom_{fid}")
-        new_prenom = st.text_input("Prénom", key=f"ajout_prenom_{fid}")
+        new_prenom = st.text_input("Prenom", key=f"ajout_prenom_{fid}")
         new_email = st.text_input("Email (optionnel)", key=f"ajout_email_{fid}")
         new_username = st.text_input(
             "Nom d'utilisateur (identifiant de connexion)", key=f"ajout_username_{fid}"
@@ -174,7 +161,7 @@ def render_add_single(users) -> None:
             type="password",
             key=f"ajout_password_confirm_{fid}",
         )
-        new_role = st.selectbox("Rôle", list(ROLES), key=f"ajout_role_{fid}")
+        new_role = st.selectbox("Role", list(ROLES), key=f"ajout_role_{fid}")
         new_datasets = st.text_input(
             "Datasets autorisés (séparés par une virgule, optionnel)",
             key=f"ajout_datasets_{fid}",
@@ -184,47 +171,33 @@ def render_add_single(users) -> None:
     if not ajout_submit:
         return
 
-    username = new_username.strip()
+    # Validation faite dans modules/users.py : testable sans Streamlit.
+    error = validate_new_user(
+        new_nom, new_prenom, new_username, new_password, new_password_confirm, users
+    )
+    if error:
+        st.error(error)
+        return
 
-    if not new_nom.strip():
-        st.error("Le nom ne peut pas être vide.")
-    elif not new_prenom.strip():
-        st.error("Le prénom ne peut pas être vide.")
-    elif not username:
-        st.error("Le nom d'utilisateur ne peut pas être vide.")
-    elif not new_password:
-        st.error("Le mot de passe ne peut pas être vide.")
-    elif new_password != new_password_confirm:
-        st.error("Les mots de passe ne correspondent pas.")
-    elif users.find_one({"username": username}):
+    try:
+        created = create_user(
+            users,
+            nom=new_nom,
+            prenom=new_prenom,
+            email=new_email,
+            username=new_username,
+            password=new_password,
+            role=new_role,
+            datasets_access=parse_datasets(new_datasets),
+        )
+    except DuplicateKeyError:
+        # Cas rare : deux clics simultanes ont passe la verification
+        # ci-dessus en meme temps, l'index unique en base tranche.
         st.error("Ce nom d'utilisateur existe déjà.")
-    else:
-        datasets_access = parse_datasets(new_datasets)
-        try:
-            users.insert_one(
-                {
-                    "nom": new_nom.strip(),
-                    "prenom": new_prenom.strip(),
-                    "email": new_email.strip() or None,
-                    "username": username,
-                    "password_hash": hash_password(new_password),
-                    "role": new_role,
-                    "datasets_access": datasets_access,
-                    "created_at": datetime.now(timezone.utc),
-                }
-            )
-        except DuplicateKeyError:
-            st.error("Ce nom d'utilisateur existe déjà.")
-            return
+        return
 
-        st.session_state["ajout_created"] = {
-            "username": username,
-            "nom": new_nom.strip(),
-            "prenom": new_prenom.strip(),
-            "role": new_role,
-            "datasets_access": datasets_access,
-        }
-        st.rerun()
+    st.session_state["ajout_created"] = created
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -232,74 +205,25 @@ def render_add_single(users) -> None:
 # ---------------------------------------------------------------------------
 
 
-def create_users_from_rows(users, rows: list) -> tuple:
-    """
-    Insère les lignes validées, avec un mot de passe temporaire par compte.
-    Retourne (created, failed) : created contient les mots de passe
-    temporaires en clair (pour le récapitulatif), failed les lignes que
-    MongoDB a refusées (doublon apparu entre-temps).
-    """
-    created = []
-    failed = []
-    now = datetime.now(timezone.utc)
-
-    for row in rows:
-        temp_password = generate_temp_password()
-        try:
-            users.insert_one(
-                {
-                    "nom": row["nom"],
-                    "prenom": row["prenom"],
-                    "email": row["email"],
-                    "username": row["username"],
-                    "password_hash": hash_password(temp_password),
-                    "role": row["role"],
-                    "datasets_access": row["datasets_access"],
-                    "created_at": now,
-                }
-            )
-        except DuplicateKeyError:
-            failed.append(
-                {
-                    "ligne": row["ligne"],
-                    "username": row["username"],
-                    "motif": "identifiant déjà utilisé",
-                }
-            )
-            continue
-
-        created.append(
-            {
-                "nom": row["nom"],
-                "prenom": row["prenom"],
-                "username": row["username"],
-                "role": row["role"],
-                "mot_de_passe_temporaire": temp_password,
-            }
-        )
-
-    return created, failed
-
-
 def render_import_result(result: dict) -> None:
-    """Bilan affiché après un import, avec le récapitulatif à télécharger."""
+    """Bilan affiche après un import, avec le récapitulatif à télécharger."""
     if result["created_count"]:
-        st.success(f"{result['created_count']} compte(s) créé(s).")
+        st.success(f"{result['created_count']} compte(s) crée(s).")
     else:
         st.info("Aucun compte n'a été créé.")
 
     if result["rejected"]:
-        st.warning(f"{len(result['rejected'])} ligne(s) rejetée(s) :")
+        st.warning(f"{len(result['rejected'])} ligne(s) rejetee(s) :")
         st.dataframe(result["rejected"], width="stretch", hide_index=True)
 
     if result["created_count"]:
         st.warning(
             "Le fichier ci-dessous contient les mots de passe temporaires en "
             "clair. Téléchargez-le maintenant : une fois que vous aurez cliqué "
-            "sur Terminer, il ne sera plus récupérable."
+            "sur Terminer, il ne sera plus récuperable."
         )
         st.download_button(
-            "Télécharger le récapitulatif (identifiants et mots de passe)",
+            "élécharger le récapitulatif (identifiants et mots de passe)",
             data=result["recap_csv"],
             file_name="recapitulatif_import_utilisateurs.csv",
             mime="text/csv",
@@ -322,7 +246,7 @@ def render_add_csv(users) -> None:
     st.write(
         "Créez plusieurs comptes d'un coup à partir d'un fichier CSV. Le mot "
         "de passe n'est pas dans le fichier : un mot de passe temporaire est "
-        "généré pour chaque compte, et vous récupérez la liste à la fin de "
+        "généré pour chaque compte, et vous récuperez la liste à la fin de "
         "l'import."
     )
     st.download_button(
@@ -365,7 +289,7 @@ def render_add_csv(users) -> None:
 
     col_ok, col_ko = st.columns(2)
     col_ok.metric("Lignes valides", len(valid_rows))
-    col_ko.metric("Lignes à corriger", len(rejected_rows))
+    col_ko.metric("Lignes a corriger", len(rejected_rows))
 
     if rejected_rows:
         st.warning(
@@ -387,7 +311,7 @@ def render_add_csv(users) -> None:
             "rejected": rejected_rows + failed,
             "recap_csv": build_recap_csv(created) if created else b"",
         }
-        # Nouvelle clé pour vider le file_uploader et l'éditeur.
+        # Nouvelle cle pour vider le file_uploader et l'editeur.
         st.session_state["import_id"] += 1
         st.rerun()
 
@@ -431,10 +355,10 @@ def render_accounts(users) -> None:
 
     usernames = [u["username"] for u in all_users]
 
-    # Le selectbox est piloté par session_state pour pouvoir suivre un compte
-    # renommé, et retomber sur le premier compte si celui qui était
-    # sélectionné vient d'être supprimé. Ces affectations doivent avoir lieu
-    # avant la création du widget.
+    # Le selectbox est pilote par session_state pour pouvoir suivre un compte
+    # renomme, et retomber sur le premier compte si celui qui etait
+    # selectionne vient d'etre supprime. Ces affectations doivent avoir lieu
+    # avant la creation du widget.
     pending = st.session_state.pop("pending_selected_username", None)
     if pending in usernames:
         st.session_state["compte_selectionne"] = pending
@@ -451,8 +375,8 @@ def render_accounts(users) -> None:
     # -- Modification -------------------------------------------------------
     st.markdown("### Modifier le compte")
 
-    # Les clés contiennent l'_id du compte : elles restent stables même si
-    # le username est modifié, et ne se mélangent pas d'un compte à l'autre.
+    # Les cles contiennent l'_id du compte : elles restent stables meme si
+    # le username est modifie, et ne se melangent pas d'un compte a l'autre.
     with st.form(f"form_modifier_user_{uid}"):
         edit_username = st.text_input(
             "Nom d'utilisateur (identifiant de connexion)",
@@ -463,7 +387,7 @@ def render_accounts(users) -> None:
             "Nom", value=selected_user.get("nom", ""), key=f"edit_nom_{uid}"
         )
         edit_prenom = st.text_input(
-            "Prénom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
+            "Prenom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
         )
         edit_email = st.text_input(
             "Email",
@@ -471,7 +395,7 @@ def render_accounts(users) -> None:
             key=f"edit_email_{uid}",
         )
         edit_role = st.selectbox(
-            "Rôle",
+            "Role",
             list(ROLES),
             index=list(ROLES).index(selected_user.get("role", "user")),
             key=f"edit_role_{uid}",
@@ -484,47 +408,32 @@ def render_accounts(users) -> None:
         modifier_submit = st.form_submit_button("Enregistrer les modifications")
 
     if modifier_submit:
-        new_username = edit_username.strip()
-
-        if not new_username:
-            st.error("Le nom d'utilisateur ne peut pas être vide.")
-        elif not edit_nom.strip():
-            st.error("Le nom ne peut pas être vide.")
-        elif not edit_prenom.strip():
-            st.error("Le prénom ne peut pas être vide.")
-        elif users.find_one(
-            {"username": new_username, "_id": {"$ne": selected_user["_id"]}}
-        ):
-            st.error("Ce nom d'utilisateur est déjà utilisé par un autre compte.")
-        elif (
-            selected_user.get("role") == "admin"
-            and edit_role == "user"
-            and nb_admins <= 1
-        ):
-            st.error("Impossible de retirer le rôle admin du dernier compte admin.")
+        error = validate_user_update(
+            users, selected_user, edit_username, edit_nom, edit_prenom, edit_role, nb_admins
+        )
+        if error:
+            st.error(error)
         else:
             try:
-                result = users.update_one(
-                    {"_id": selected_user["_id"]},
-                    {
-                        "$set": {
-                            "username": new_username,
-                            "nom": edit_nom.strip(),
-                            "prenom": edit_prenom.strip(),
-                            "email": edit_email.strip() or None,
-                            "role": edit_role,
-                            "datasets_access": parse_datasets(edit_datasets),
-                        }
-                    },
+                updated = update_user(
+                    users,
+                    user_id=selected_user["_id"],
+                    new_username=edit_username,
+                    new_nom=edit_nom,
+                    new_prenom=edit_prenom,
+                    new_email=edit_email,
+                    new_role=edit_role,
+                    datasets_access=parse_datasets(edit_datasets),
                 )
             except DuplicateKeyError:
                 st.error("Ce nom d'utilisateur est déjà utilisé par un autre compte.")
             else:
-                if result.matched_count == 0:
+                if not updated:
                     st.error("Ce compte n'existe plus.")
                 else:
-                    # Si l'admin renomme son propre compte, on met à jour sa
-                    # session pour que les contrôles de suppression restent
+                    new_username = edit_username.strip()
+                    # Si l'admin renomme son propre compte, on met a jour sa
+                    # session pour que les controles de suppression restent
                     # corrects.
                     if selected_username == current_username:
                         st.session_state["username"] = new_username
@@ -547,7 +456,7 @@ def render_accounts(users) -> None:
 # Mise en page
 # ---------------------------------------------------------------------------
 
-ensure_username_index()
+ensure_username_index_once()
 users_collection = get_users_collection()
 
 st.title("Espace Administrateur")
@@ -591,4 +500,4 @@ with tab_comptes:
 
 with tab_reporting:
     st.subheader("Reporting")
-    st.write("A venir : alertes et suivi d'activite.")
+    st.write("A venir : alertes et suivi d'activité.")
