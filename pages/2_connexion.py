@@ -12,7 +12,7 @@ from modules.topnav import render_topnav
 
 st.set_page_config(page_title="Connexion")
 
-render_topnav()
+render_topnav("Connexion")
 
 st.title("Connexion")
 

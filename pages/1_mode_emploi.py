@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="Mode d'emploi")
 
 from modules.topnav import render_topnav
-render_topnav()
+render_topnav("Mode d'emploi")
 
 
 

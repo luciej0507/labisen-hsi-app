@@ -54,17 +54,17 @@ def validate_new_user(nom: str, prenom: str, username: str, password: str,
     Renvoie un message d'erreur, ou None si tout est valide.
     """
     if not nom.strip():
-        return "Le nom ne peut pas etre vide."
+        return "Le nom ne peut pas être vide."
     if not prenom.strip():
-        return "Le prenom ne peut pas etre vide."
+        return "Le prénom ne peut pas être vide."
     if not username.strip():
-        return "Le nom d'utilisateur ne peut pas etre vide."
+        return "Le nom d'utilisateur ne peut pas être vide."
     if not password:
-        return "Le mot de passe ne peut pas etre vide."
+        return "Le mot de passe ne peut pas être vide."
     if password != password_confirm:
         return "Les mots de passe ne correspondent pas."
     if users.find_one({"username": username.strip()}):
-        return "Ce nom d'utilisateur existe deja."
+        return "Ce nom d'utilisateur existe déjà."
     return None
 
 
@@ -121,18 +121,18 @@ def validate_user_update(users, selected_user: dict, new_username: str,
     Renvoie un message d'erreur, ou None si tout est valide.
     """
     if not new_username.strip():
-        return "Le nom d'utilisateur ne peut pas etre vide."
+        return "Le nom d'utilisateur ne peut pas être vide."
     if not new_nom.strip():
-        return "Le nom ne peut pas etre vide."
+        return "Le nom ne peut pas être vide."
     if not new_prenom.strip():
-        return "Le prenom ne peut pas etre vide."
+        return "Le prénom ne peut pas être vide."
     if users.find_one(
         {"username": new_username.strip(), "_id": {"$ne": selected_user["_id"]}}
     ):
-        return "Ce nom d'utilisateur est deja utilise par un autre compte."
+        return "Ce nom d'utilisateur est déjà utilisé par un autre compte."
     if (selected_user.get("role") == "admin" and new_role == "user"
             and nb_admins <= 1):
-        return "Impossible de retirer le role admin du dernier compte admin."
+        return "Impossible de retirer le rôle admin du dernier compte admin."
     return None
 
 
@@ -195,7 +195,7 @@ def create_users_from_rows(users, rows: list) -> tuple:
                 {
                     "ligne": row["ligne"],
                     "username": row["username"],
-                    "motif": "identifiant deja utilise",
+                    "motif": "identifiant déjà utilisé",
                 }
             )
             continue

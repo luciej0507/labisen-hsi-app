@@ -5,9 +5,9 @@ from modules.topnav import render_topnav
 
 st.set_page_config(page_title="Espace utilisateur")
 
-render_topnav()
+render_topnav("User")
 
-require_role("user")
+require_role("Connexion")
 
 st.title("Espace de travail")
 st.write(f"Connecté en tant que {st.session_state['username']}")

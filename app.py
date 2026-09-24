@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 from modules.topnav import render_topnav
-render_topnav()
+render_topnav("Accueil")
 
 
 
@@ -33,7 +33,7 @@ with col_left:
         st.image(str(LOGO_ISEN_PATH), width=150)
     else:
         st.warning("Logo ISEN manquant")
-        
+
 with col_title:
     st.title("Application HSI - ISEN / LabISEN")
 

@@ -41,7 +41,7 @@ from modules.users import (
 
 st.set_page_config(page_title="Espace Admin")
 
-render_topnav()
+render_topnav("Connexion")
 
 require_role("admin")
 
@@ -148,7 +148,7 @@ def render_add_single(users) -> None:
 
     with st.form(f"form_ajout_user_{fid}"):
         new_nom = st.text_input("Nom", key=f"ajout_nom_{fid}")
-        new_prenom = st.text_input("Prenom", key=f"ajout_prenom_{fid}")
+        new_prenom = st.text_input("Prénom", key=f"ajout_prenom_{fid}")
         new_email = st.text_input("Email (optionnel)", key=f"ajout_email_{fid}")
         new_username = st.text_input(
             "Nom d'utilisateur (identifiant de connexion)", key=f"ajout_username_{fid}"

@@ -2,3 +2,12 @@
 # Désactive le menu de navigation automatique dans la sidebar.
 # On construit à la place un menu horizontal maison (voir modules/topnav.py).
 showSidebarNavigation = false
+
+[theme]
+# Couleur d'accent principale (rouge), reprise dans le menu horizontal
+# et appliquée automatiquement aux boutons, sliders et liens Streamlit.
+primaryColor = "#C8102E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#262730"
+font = "sans serif"
