@@ -1,30 +1,30 @@
 """
 3_admin_dashboard.py : Page Admin Dashboard.
 
-Accessible uniquement aux comptes avec le role admin. Contient les
+Accessible uniquement aux comptes avec le rôle admin. Contient les
 onglets de gestion des utilisateurs : ajout (unitaire ou import CSV),
 comptes utilisateurs (consultation, modification, suppression), reporting.
 
 Cette page ne contient que de l'affichage Streamlit et l'appel aux
 fonctions de modules/users.py et modules/user_import.py. La logique
-metier (validation, ecriture en base) vit dans ces modules pour rester
+métier (validation, écriture en base) vit dans ces modules pour rester
 testable independamment de Streamlit.
 """
 
 import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
-from modules.auth import logout_user, require_role
+from modules.auth import require_role
+from modules.datasets import DATASETS_REMOTE_PATH, list_folder_contents
 from modules.db_mongo import get_users_collection
-from modules.flash import flash, render_flash
-from modules.topnav import render_topnav
+from ui.flash import flash, render_flash
+from ui.topnav import render_topnav
 from modules.user_import import (
     ROLES,
     build_recap_csv,
     build_template_csv,
     clean_dataframe,
     parse_csv,
-    parse_datasets,
     validate_rows,
 )
 from modules.users import (
@@ -39,9 +39,9 @@ from modules.users import (
     validate_user_update,
 )
 
-st.set_page_config(page_title="Espace Admin")
+st.set_page_config(page_title="Espace Admin", layout="wide")
 
-render_topnav("Connexion")
+render_topnav("Administration")
 
 require_role("admin")
 
@@ -123,6 +123,62 @@ def dialog_delete_user(username: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Affichage des datasets, niveau par niveau (utilise par les deux formulaires)
+# ---------------------------------------------------------------------------
+
+
+def afficher_arborescence_datasets(chemin: str, prefixe_cle: str,
+                                    deja_autorises: list, profondeur: int = 0) -> None:
+    """
+    Affiche le contenu d'un dossier du serveur, avec une case a cocher par
+    element (dataset, sous-dossier ou fichier).
+
+    Un sous-dossier n'est parcouru sur le serveur que si l'admin coche
+    "Explorer" pour ce sous-dossier precis (chargement a la demande,
+    niveau par niveau), pour rester rapide meme sur de gros dossiers.
+
+    Les cases sont ajoutees a st.session_state via leur cle
+    (prefixe_cle + chemin de l'element), relue au moment de la
+    validation du formulaire correspondant.
+    """
+    elements = list_folder_contents(chemin)
+    if not elements and profondeur == 0:
+        st.info("Aucun dataset trouvé sur le serveur.")
+
+    for element in elements:
+        indentation = "    " * profondeur
+        cle = f"{prefixe_cle}{element['chemin']}"
+
+        if not element["est_dossier"]:
+            # Fichier : une seule case a cocher, pas d'exploration possible.
+            st.checkbox(
+                f"{indentation}{element['nom']}",
+                value=element["chemin"] in deja_autorises,
+                key=cle,
+            )
+            continue
+
+        # Dossier : une case pour l'autoriser, et une case "Explorer" pour
+        # charger son contenu (un seul niveau a la fois).
+        colonne_case, colonne_exploration = st.columns([4, 1])
+        with colonne_case:
+            st.checkbox(
+                f"{indentation}{element['nom']}",
+                value=element["chemin"] in deja_autorises,
+                key=cle,
+            )
+        with colonne_exploration:
+            explorer = st.checkbox(
+                "Explorer",
+                key=f"explorer_{cle}",
+            )
+        if explorer:
+            afficher_arborescence_datasets(
+                element["chemin"], prefixe_cle, deja_autorises, profondeur + 1
+            )
+
+
+# ---------------------------------------------------------------------------
 # Onglet Ajout utilisateur : un seul utilisateur
 # ---------------------------------------------------------------------------
 
@@ -162,14 +218,28 @@ def render_add_single(users) -> None:
             key=f"ajout_password_confirm_{fid}",
         )
         new_role = st.selectbox("Role", list(ROLES), key=f"ajout_role_{fid}")
-        new_datasets = st.text_input(
-            "Datasets autorisés (séparés par une virgule, optionnel)",
-            key=f"ajout_datasets_{fid}",
-        )
+
         ajout_submit = st.form_submit_button("Créer le compte")
+
+    # Selection des datasets : affichee sous le formulaire, mais toujours
+    # HORS de celui-ci. A l'interieur d'un st.form, aucun widget ne
+    # provoque de rafraichissement tant que le formulaire n'est pas
+    # valide : deplier un sous-dossier n'aurait donc aucun effet visible
+    # avant la creation du compte.
+    st.write("Datasets autorisés")
+    prefixe_dataset = f"ajout_dataset_{fid}_"
+    afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, [])
 
     if not ajout_submit:
         return
+
+    # Les datasets coches sont recuperes a partir des cases affichees
+    # ci-dessus, en repérant leurs cles par prefixe.
+    new_datasets_access = [
+        cle[len(prefixe_dataset):]
+        for cle, valeur in st.session_state.items()
+        if cle.startswith(prefixe_dataset) and valeur
+    ]
 
     # Validation faite dans modules/users.py : testable sans Streamlit.
     error = validate_new_user(
@@ -188,7 +258,7 @@ def render_add_single(users) -> None:
             username=new_username,
             password=new_password,
             role=new_role,
-            datasets_access=parse_datasets(new_datasets),
+            datasets_access=new_datasets_access,
         )
     except DuplicateKeyError:
         # Cas rare : deux clics simultanes ont passe la verification
@@ -208,22 +278,22 @@ def render_add_single(users) -> None:
 def render_import_result(result: dict) -> None:
     """Bilan affiche après un import, avec le récapitulatif à télécharger."""
     if result["created_count"]:
-        st.success(f"{result['created_count']} compte(s) crée(s).")
+        st.success(f"{result['created_count']} compte(s) créé(s).")
     else:
         st.info("Aucun compte n'a été créé.")
 
     if result["rejected"]:
-        st.warning(f"{len(result['rejected'])} ligne(s) rejetee(s) :")
+        st.warning(f"{len(result['rejected'])} ligne(s) rejetée(s) :")
         st.dataframe(result["rejected"], width="stretch", hide_index=True)
 
     if result["created_count"]:
         st.warning(
             "Le fichier ci-dessous contient les mots de passe temporaires en "
             "clair. Téléchargez-le maintenant : une fois que vous aurez cliqué "
-            "sur Terminer, il ne sera plus récuperable."
+            "sur Terminer, il ne sera plus récupérable."
         )
         st.download_button(
-            "élécharger le récapitulatif (identifiants et mots de passe)",
+            "Télécharger le récapitulatif (identifiants et mots de passe)",
             data=result["recap_csv"],
             file_name="recapitulatif_import_utilisateurs.csv",
             mime="text/csv",
@@ -387,7 +457,7 @@ def render_accounts(users) -> None:
             "Nom", value=selected_user.get("nom", ""), key=f"edit_nom_{uid}"
         )
         edit_prenom = st.text_input(
-            "Prenom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
+            "Prénom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
         )
         edit_email = st.text_input(
             "Email",
@@ -395,19 +465,29 @@ def render_accounts(users) -> None:
             key=f"edit_email_{uid}",
         )
         edit_role = st.selectbox(
-            "Role",
+            "Rôle",
             list(ROLES),
             index=list(ROLES).index(selected_user.get("role", "user")),
             key=f"edit_role_{uid}",
         )
-        edit_datasets = st.text_input(
-            "Datasets autorisés (séparés par une virgule)",
-            value=", ".join(selected_user.get("datasets_access", [])),
-            key=f"edit_datasets_{uid}",
-        )
         modifier_submit = st.form_submit_button("Enregistrer les modifications")
 
+    # Selection des datasets : affichee sous le formulaire, mais toujours
+    # HORS de celui-ci (voir le commentaire dans render_add_single).
+    # Precochee selon les datasets deja autorises pour ce compte.
+    st.write("Datasets autorisés")
+    deja_autorises = selected_user.get("datasets_access", [])
+    prefixe_dataset = f"edit_dataset_{uid}_"
+    afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, deja_autorises)
+
     if modifier_submit:
+        # Les datasets coches sont recuperes a partir des cases affichees
+        # plus haut, hors du formulaire, en repérant leurs cles par prefixe.
+        edit_datasets_access = [
+            cle[len(prefixe_dataset):]
+            for cle, valeur in st.session_state.items()
+            if cle.startswith(prefixe_dataset) and valeur
+        ]
         error = validate_user_update(
             users, selected_user, edit_username, edit_nom, edit_prenom, edit_role, nb_admins
         )
@@ -423,7 +503,7 @@ def render_accounts(users) -> None:
                     new_prenom=edit_prenom,
                     new_email=edit_email,
                     new_role=edit_role,
-                    datasets_access=parse_datasets(edit_datasets),
+                    datasets_access=edit_datasets_access,
                 )
             except DuplicateKeyError:
                 st.error("Ce nom d'utilisateur est déjà utilisé par un autre compte.")
@@ -460,20 +540,6 @@ ensure_username_index_once()
 users_collection = get_users_collection()
 
 st.title("Espace Administrateur")
-
-col_info, col_logout = st.columns([4, 1])
-with col_info:
-    st.write("Connecté en tant que : " + str(st.session_state.get("username")))
-with col_logout:
-    if st.button("Se déconnecter"):
-        # Le récapitulatif d'import contient des mots de passe temporaires en
-        # clair : on ne le garde pas en session après la déconnexion.
-        st.session_state["import_result"] = None
-        st.session_state["ajout_created"] = None
-        logout_user()
-        st.switch_page("pages/2_connexion.py")
-
-st.divider()
 
 tab_ajout, tab_comptes, tab_reporting = st.tabs(
     ["Ajout utilisateur", "Comptes utilisateurs", "Reporting"]

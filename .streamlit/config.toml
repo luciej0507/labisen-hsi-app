@@ -3,6 +3,11 @@
 # On construit à la place un menu horizontal maison (voir modules/topnav.py).
 showSidebarNavigation = false
 
+# Masque les options développeur (bouton Deploy, menu ...) du bandeau
+# natif de Streamlit. Ce bandeau reste sinon nécessaire : c'est lui qui
+# affiche le bouton pour replier ou rouvrir la sidebar.
+toolbarMode = "minimal"
+
 [theme]
 # Couleur d'accent principale (rouge), reprise dans le menu horizontal
 # et appliquée automatiquement aux boutons, sliders et liens Streamlit.

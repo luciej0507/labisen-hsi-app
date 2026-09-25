@@ -1,7 +1,15 @@
 .venv
 __pycache__/
+*.pyc
 *.db
 assets/
 .env
 memo.txt
 dump_mongo/
+
+# Fichiers générés par les tests
+.pytest_cache/
+__pycache__/
+*.pyc
+.coverage
+htmlcov/

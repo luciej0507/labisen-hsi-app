@@ -4,12 +4,11 @@ Page "Mode d'emploi" - accessible sans connexion.
 
 import streamlit as st
 
-st.set_page_config(page_title="Mode d'emploi")
+from ui.topnav import render_topnav
 
-from modules.topnav import render_topnav
+st.set_page_config(page_title="Mode d'emploi", layout="wide")
+
 render_topnav("Mode d'emploi")
-
-
 
 st.title("Mode d'emploi")
 
@@ -38,8 +37,8 @@ st.markdown(
         ├── PNG/    → 1 fichier .png par cube
         └── TIFF/   → 1 fichier .tiff par cube
     ```
-
-    ⚠️ **Règle essentielle** : tous les fichiers correspondant à un même cube doivent
+    
+    **Règle essentielle** : tous les fichiers correspondant à un même cube doivent
     partager exactement le même nom de base (seule l'extension change).
 
     Exemple pour un cube du jeu de test nommé
@@ -80,6 +79,6 @@ st.markdown(
     - La consultation des menus **Accueil** et **Mode d'emploi** ne nécessite aucune
       connexion.
     - L'accès aux données et aux fonctionnalités de gestion nécessite de se connecter via
-      l'onglet **Connexion**, en tant qu'Administrateur ou Utilisateur.
+      le bouton **Connexion** (en haut à droite), en tant qu'Administrateur ou Utilisateur.
     """
 )

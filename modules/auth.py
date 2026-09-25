@@ -39,14 +39,15 @@ def authenticate(username: str, password: str) -> Optional[dict]:
 
 def authenticate_with_role(username: str, password: str, expected_role: str) -> Optional[dict]:
     """
-    Authentifie l'utilisateur et verifie qu'il a bien le role attendu.
-    Renvoie le user si les identifiants sont corrects et que le role
+    Authentifie l'utilisateur et vérifie qu'il a bien le rôle attendu.
+    Renvoie le user si les identifiants sont corrects et que le rôle
     correspond, sinon None.
     """
     user = authenticate(username, password)
     if user is not None and user.get("role") == expected_role:
         return user
     return None
+
 
 def login_user(user: dict) -> None:
     """Enregistre l'utilisateur connecté dans la session Streamlit."""
@@ -56,8 +57,13 @@ def login_user(user: dict) -> None:
 
 
 def logout_user() -> None:
-    """Déconnecte l'utilisateur courant (vide les infos de session)."""
-    for key in ("logged_in", "username", "role"):
+    """
+    Déconnecte l'utilisateur courant (vide les infos de session).
+
+    Efface aussi les données sensibles de la page admin : le récapitulatif
+    d'import contient des mots de passe temporaires en clair.
+    """
+    for key in ("logged_in", "username", "role", "import_result", "ajout_created"):
         st.session_state.pop(key, None)
 
 

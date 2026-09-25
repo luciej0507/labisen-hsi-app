@@ -1,16 +1,16 @@
 """
 Page Connexion.
 
-Formulaires de connexion Admin et User cote a cote. Utilise modules/auth.py
-pour verifier les identifiants et gerer la session.
+Formulaires de connexion Admin et User côte à côte. Utilise modules/auth.py
+pour vérifier les identifiants et gérer la session.
 """
 
 import streamlit as st
 
 from modules.auth import authenticate_with_role, login_user
-from modules.topnav import render_topnav
+from ui.topnav import render_topnav
 
-st.set_page_config(page_title="Connexion")
+st.set_page_config(page_title="Connexion", layout="wide")
 
 render_topnav("Connexion")
 

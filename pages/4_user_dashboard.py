@@ -1,28 +1,24 @@
+"""
+Page Accueil de l'espace de travail : accessible uniquement aux comptes
+avec le rôle user. Les autres sections (Acquisition, Gestion des BDD,
+Apprentissage) sont dans les pages 4a, 4b et 4c.
+"""
+
 import streamlit as st
 
-from modules.auth import logout_user, require_role
-from modules.topnav import render_topnav
+from modules.auth import require_role
+from ui.sidebar import render_sidebar
+from ui.topnav import render_topnav
 
-st.set_page_config(page_title="Espace utilisateur")
+st.set_page_config(page_title="Mon Espace", layout="wide")
 
-render_topnav("User")
+render_topnav("Espace de travail")
 
-require_role("Connexion")
+# Bloque l'accès si l'utilisateur n'est pas connecté avec le rôle "user".
+require_role("user")
 
-st.title("Espace de travail")
-st.write(f"Connecté en tant que {st.session_state['username']}")
+# Menu latéral (après require_role pour ne pas l'afficher aux non autorisés).
+render_sidebar("Accueil")
 
-if st.button("Déconnexion"):
-    logout_user()
-    st.switch_page("pages/2_connexion.py")
-
-tab_acquisition, tab_database = st.tabs(["Acquisition", "Gestion de Base de données"])
-
-# Onglet Acquisition : pas développé pour l'instant
-with tab_acquisition:
-    st.write("À venir")
-
-
-# Onglet Gestion de Base de données
-with tab_database:
-    st.write("À venir")
+st.title("Mon Espace")
+st.write("À venir")
