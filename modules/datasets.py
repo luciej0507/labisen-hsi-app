@@ -78,3 +78,30 @@ def list_folder_contents(chemin: str) -> list:
     # Tri alphabétique, dossiers d'abord, pour une lecture plus naturelle
     elements.sort(key=lambda e: (not e["est_dossier"], e["nom"]))
     return elements
+
+def mettre_a_jour_selection(selection: set, chemin: str, coche: bool) -> set:
+    """
+    Renvoie une nouvelle sélection de chemins, avec `chemin` ajouté si
+    `coche` vaut True, ou retiré sinon.
+
+    La sélection d'origine n'est pas modifiée. Cette fonction ne dépend
+    pas de Streamlit : c'est l'interface qui l'appelle à chaque clic.
+    """
+    nouvelle_selection = set(selection)
+    if coche:
+        nouvelle_selection.add(chemin)
+    else:
+        nouvelle_selection.discard(chemin)
+    return nouvelle_selection
+
+
+def chemin_relatif(racine: str, chemin: str) -> str:
+    """
+    Renvoie `chemin` sans le préfixe `racine`, pour un affichage plus court.
+
+    Si `chemin` n'est pas situé sous la racine, il est renvoyé tel quel.
+    """
+    base = racine.rstrip("/") + "/"
+    if chemin.startswith(base):
+        return chemin[len(base):]
+    return chemin

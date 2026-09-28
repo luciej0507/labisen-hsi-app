@@ -17,8 +17,6 @@ from typing import Optional
 import bcrypt
 from pymongo.errors import PyMongoError
 
-from modules.user_import import generate_temp_password
-
 
 def ensure_username_index(users) -> bool:
     """
@@ -38,6 +36,38 @@ def ensure_username_index(users) -> bool:
 def hash_password(password: str) -> str:
     """Hash bcrypt du mot de passe, prêt à être stocké en base."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def is_password_pending(user: dict) -> bool:
+    """
+    True si le compte n'a pas encore de mot de passe (compte "en attente",
+    créé par import CSV sans mot de passe). Il ne peut pas se connecter.
+    """
+    return not user.get("password_hash")
+
+
+def validate_new_password(password: str, password_confirm: str) -> Optional[str]:
+    """
+    Vérifie la saisie d'un nouveau mot de passe.
+    Renvoie un message d'erreur, ou None si tout est valide.
+    """
+    if not password:
+        return "Le mot de passe ne peut pas être vide."
+    if password != password_confirm:
+        return "Les mots de passe ne correspondent pas."
+    return None
+
+
+def reset_password(users, user_id, password: str) -> bool:
+    """
+    Définit ou remplace le mot de passe d'un compte (stocké hashé).
+    Renvoie True si le compte existait, False s'il a été supprimé entre temps.
+    """
+    result = users.update_one(
+        {"_id": user_id},
+        {"$set": {"password_hash": hash_password(password)}},
+    )
+    return result.matched_count > 0
 
 
 def format_date(value) -> str:
@@ -164,10 +194,13 @@ def update_user(users, user_id, new_username: str, new_nom: str, new_prenom: str
 
 def create_users_from_rows(users, rows: list) -> tuple:
     """
-    Insère les lignes validées, avec un mot de passe temporaire par compte.
-    Renvoie (created, failed) : created contient les mots de passe
-    temporaires en clair (pour le récapitulatif), failed les lignes que
-    MongoDB a refusées (doublon apparu entre temps).
+    Insère les lignes validées. Si une ligne a un mot de passe, il est
+    hashé. Sinon le compte est créé "en attente" (password_hash à None) et
+    l'admin définira le mot de passe ensuite.
+    Renvoie (created, failed) : created contient les comptes créés (avec
+    un booléen mot_de_passe_defini), failed les lignes que MongoDB a
+    refusées (doublon apparu entre temps). Aucun mot de passe en clair
+    n'est renvoyé.
     """
     from pymongo.errors import DuplicateKeyError
 
@@ -176,7 +209,8 @@ def create_users_from_rows(users, rows: list) -> tuple:
     now = datetime.now(timezone.utc)
 
     for row in rows:
-        temp_password = generate_temp_password()
+        # Hash si un mot de passe est fourni, None sinon (compte en attente)
+        password_hash = hash_password(row["password"]) if row.get("password") else None
         try:
             users.insert_one(
                 {
@@ -184,7 +218,7 @@ def create_users_from_rows(users, rows: list) -> tuple:
                     "prenom": row["prenom"],
                     "email": row["email"],
                     "username": row["username"],
-                    "password_hash": hash_password(temp_password),
+                    "password_hash": password_hash,
                     "role": row["role"],
                     "datasets_access": row["datasets_access"],
                     "created_at": now,
@@ -206,7 +240,7 @@ def create_users_from_rows(users, rows: list) -> tuple:
                 "prenom": row["prenom"],
                 "username": row["username"],
                 "role": row["role"],
-                "mot_de_passe_temporaire": temp_password,
+                "mot_de_passe_defini": password_hash is not None,
             }
         )
 

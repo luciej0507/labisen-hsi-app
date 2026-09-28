@@ -6,9 +6,9 @@ import streamlit as st
 
 from modules.auth import require_role
 from ui.sidebar import render_sidebar
-from ui.topnav import render_topnav
+from ui.topnav import configurer_page, render_topnav
 
-st.set_page_config(page_title="Apprentissage", layout="wide")
+configurer_page("Apprentissage")
 
 render_topnav("Mon Espace")
 require_role("user")

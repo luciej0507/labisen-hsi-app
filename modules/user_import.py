@@ -6,16 +6,16 @@ de les tester facilement. La page admin s'occupe de l'affichage et de
 l'insertion en base.
 
 Format du CSV attendu (séparateur ";" ou ",", encodage UTF-8 ou Excel) :
-    nom;prenom;email;username;role;datasets_access
+    nom;prenom;email;username;role;datasets_access;password
 Colonnes obligatoires : nom, prenom, username.
-Le mot de passe n'est volontairement pas dans le CSV : des mots de passe
-temporaires sont générés à l'import.
+La colonne password est optionnelle : si elle est vide pour une ligne, le
+compte est créé "en attente" et l'admin définit son mot de passe ensuite
+depuis l'onglet Comptes utilisateurs.
 """
 
 import csv
 import io
 import re
-import secrets
 import unicodedata
 from typing import Optional
 
@@ -23,14 +23,11 @@ import pandas as pd
 
 ROLES = ("user", "admin")
 
-CSV_COLUMNS = ["nom", "prenom", "email", "username", "role", "datasets_access"]
+# La colonne password est en dernier et n'est pas obligatoire.
+CSV_COLUMNS = ["nom", "prenom", "email", "username", "role", "datasets_access", "password"]
 CSV_REQUIRED_COLUMNS = ["nom", "prenom", "username"]
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-# Alphabet sans caractères ambigus (pas de 0/O, 1/l/I) pour faciliter la
-# communication des mots de passe temporaires.
-_TEMP_PASSWORD_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def parse_datasets(text: Optional[str]) -> list:
@@ -38,11 +35,6 @@ def parse_datasets(text: Optional[str]) -> list:
     if not text:
         return []
     return [d.strip() for d in re.split(r"[;,]", text) if d.strip()]
-
-
-def generate_temp_password(length: int = 12) -> str:
-    """Génère un mot de passe temporaire aléatoire (module secrets)."""
-    return "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))
 
 
 def _normalize_column_name(name) -> str:
@@ -144,7 +136,7 @@ def validate_rows(df: pd.DataFrame, existing_usernames: set) -> tuple:
 
     Retourne (valid, rejected) :
     - valid : liste de dicts prêts à être insérés (role et datasets_access
-      normalisés)
+      normalisés, password vaut None s'il n'est pas renseigné)
     - rejected : liste de dicts {"ligne", "username", "motif"}
     """
     valid = []
@@ -196,6 +188,8 @@ def validate_rows(df: pd.DataFrame, existing_usernames: set) -> tuple:
                     "username": username,
                     "role": role,
                     "datasets_access": parse_datasets(row["datasets_access"]),
+                    # None si la cellule est vide : compte créé en attente
+                    "password": row["password"] or None,
                 }
             )
 
@@ -213,19 +207,10 @@ def build_template_csv() -> bytes:
                 "username": "mdupont",
                 "role": "user",
                 "datasets_access": "dataset_a,dataset_b",
+                # Vide dans l'exemple : le compte sera créé en attente
+                "password": "",
             }
         ],
         columns=CSV_COLUMNS,
     )
     return example.to_csv(sep=";", index=False).encode("utf-8-sig")
-
-
-def build_recap_csv(created: list) -> bytes:
-    """
-    CSV récapitulatif des comptes créés, avec les mots de passe temporaires
-    en clair. Chaque élément de created est un dict avec les clés nom,
-    prenom, username, role, mot_de_passe_temporaire.
-    """
-    columns = ["nom", "prenom", "username", "role", "mot_de_passe_temporaire"]
-    df = pd.DataFrame(created, columns=columns)
-    return df.to_csv(sep=";", index=False).encode("utf-8-sig")

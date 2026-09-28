@@ -8,9 +8,9 @@ pour vérifier les identifiants et gérer la session.
 import streamlit as st
 
 from modules.auth import authenticate_with_role, login_user
-from ui.topnav import render_topnav
+from ui.topnav import configurer_page, render_topnav
 
-st.set_page_config(page_title="Connexion", layout="wide")
+configurer_page("Connexion")
 
 render_topnav("Connexion")
 

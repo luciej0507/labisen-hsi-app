@@ -4,9 +4,9 @@ Page "Mode d'emploi" - accessible sans connexion.
 
 import streamlit as st
 
-from ui.topnav import render_topnav
+from ui.topnav import configurer_page, render_topnav
 
-st.set_page_config(page_title="Mode d'emploi", layout="wide")
+configurer_page("Mode d'emploi")
 
 render_topnav("Mode d'emploi")
 

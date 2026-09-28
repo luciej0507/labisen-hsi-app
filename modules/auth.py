@@ -28,6 +28,11 @@ def authenticate(username: str, password: str) -> Optional[dict]:
     if user is None:
         return None
 
+    # Compte en attente (pas encore de mot de passe défini par l'admin) :
+    # connexion refusée, avec le même message générique que les autres échecs.
+    if not user.get("password_hash"):
+        return None
+
     stored_hash = user["password_hash"].encode("utf-8")
     entered_password = password.encode("utf-8")
 
@@ -60,8 +65,8 @@ def logout_user() -> None:
     """
     Déconnecte l'utilisateur courant (vide les infos de session).
 
-    Efface aussi les données sensibles de la page admin : le récapitulatif
-    d'import contient des mots de passe temporaires en clair.
+    Efface aussi les données de la page admin (bilan d'import, récapitulatif
+    du dernier compte créé).
     """
     for key in ("logged_in", "username", "role", "import_result", "ajout_created"):
         st.session_state.pop(key, None)

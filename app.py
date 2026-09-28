@@ -8,10 +8,10 @@ il est affiché par défaut au lancement, avant tout autre onglet.
 import streamlit as st
 
 from modules.auth import is_logged_in
-from ui.topnav import render_footer, render_topnav
+from ui.topnav import render_footer, configurer_page, render_topnav
 
 # Doit être le premier appel Streamlit de la page.
-st.set_page_config(page_title="SpectraVision", layout="wide")
+configurer_page("SpectraVision")
 
 # En-tête : logos, nom de l'appli, menu et bouton de connexion.
 render_topnav("Accueil")

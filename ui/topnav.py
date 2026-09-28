@@ -6,9 +6,11 @@ construit avec les composants natifs de Streamlit (st.columns, st.page_link,
 st.button) et un peu de CSS. Il remplace streamlit-option-menu, dont le rendu
 dans un cadre à part ne reprenait pas la police de l'appli.
 
-À appeler en haut de chaque page, juste après st.set_page_config(), en
-indiquant le libellé de la page courante :
+À appeler en haut de chaque page : configurer_page() en premier (elle
+remplace st.set_page_config()), puis render_topnav() avec le libellé de la
+page courante :
 
+    configurer_page("Accueil")
     render_topnav("Accueil")
 
 Le pied de page s'ajoute en bas d'une page avec render_footer().
@@ -55,7 +57,7 @@ CSS = """
 
 /* Contenu centré avec une largeur maximale, et moins d'espace en haut. */
 div[data-testid="stMainBlockContainer"] {
-    max-width: 1200px;
+    max-width: 1600px;
     margin: 0 auto;
     padding-top: 1.5rem;
 }
@@ -124,6 +126,21 @@ def _logos_html() -> str:
     return logo_labisen
 
 
+def configurer_page(titre: str) -> None:
+    """
+    Configure la page Streamlit avec les réglages communs à toute l'appli.
+
+    Doit être la toute première commande Streamlit de la page, à la place
+    de st.set_page_config().
+
+    Args:
+        titre: titre affiché dans l'onglet du navigateur.
+    """
+    # layout="wide" utilise toute la largeur disponible (le plafond est
+    # ensuite géré par le CSS de l'en-tête).
+    st.set_page_config(page_title=titre, layout="wide")
+
+
 def render_topnav(page_courante: str) -> None:
     """
     Affiche l'en-tête en haut de la page courante.
@@ -147,7 +164,8 @@ def render_topnav(page_courante: str) -> None:
 
     # Largeurs relatives des colonnes : marque, un lien par page,
     # le nom de l'utilisateur (si connecté), puis le bouton.
-    poids = [4] + [1.4] * len(liens) + ([1.2] if connecte else []) + [1.0]
+    # Le bouton a un poids de 1.6 pour que "Déconnexion" ne soit pas tronqué.
+    poids = [3] + [1.4] * len(liens) + ([1.2] if connecte else []) + [1.6]
 
     with st.container(key="entete"):
         # On parcourt les colonnes dans l'ordre avec next().

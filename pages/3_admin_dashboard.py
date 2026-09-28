@@ -15,13 +15,17 @@ import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
 from modules.auth import require_role
-from modules.datasets import DATASETS_REMOTE_PATH, list_folder_contents
+from modules.datasets import (
+    DATASETS_REMOTE_PATH,
+    chemin_relatif,
+    list_folder_contents,
+    mettre_a_jour_selection,
+)
 from modules.db_mongo import get_users_collection
 from ui.flash import flash, render_flash
-from ui.topnav import render_topnav
+from ui.topnav import configurer_page, render_topnav
 from modules.user_import import (
     ROLES,
-    build_recap_csv,
     build_template_csv,
     clean_dataframe,
     parse_csv,
@@ -34,12 +38,15 @@ from modules.users import (
     delete_user,
     ensure_username_index,
     format_date,
+    is_password_pending,
+    reset_password,
     update_user,
+    validate_new_password,
     validate_new_user,
     validate_user_update,
 )
 
-st.set_page_config(page_title="Espace Admin", layout="wide")
+configurer_page("Espace Admin")
 
 render_topnav("Administration")
 
@@ -59,6 +66,9 @@ st.session_state.setdefault("ajout_created", None)
 st.session_state.setdefault("import_id", 0)
 # import_result : bilan du dernier import CSV (None si aucun).
 st.session_state.setdefault("import_result", None)
+# comptes_table_id : compteur qui change la clé du tableau des comptes, ce
+# qui efface la ligne sélectionnée (utilisé après une suppression).
+st.session_state.setdefault("comptes_table_id", 0)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +124,8 @@ def dialog_delete_user(username: str) -> None:
         if st.button("Confirmer la suppression", type="primary", width="stretch"):
             if delete_user(users, user["_id"]):
                 flash("success", "Compte supprimé avec succès : " + username, "comptes")
+                # Les lignes du tableau ont changé de position : on efface la sélection
+                st.session_state["comptes_table_id"] += 1
             else:
                 flash("error", "Le compte n'a pas pu être supprimé.", "comptes")
             st.rerun()
@@ -127,55 +139,142 @@ def dialog_delete_user(username: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def afficher_arborescence_datasets(chemin: str, prefixe_cle: str,
-                                    deja_autorises: list, profondeur: int = 0) -> None:
-    """
-    Affiche le contenu d'un dossier du serveur, avec une case a cocher par
-    element (dataset, sous-dossier ou fichier).
+def _sur_case_modifiee(cle_selection: str, chemin: str, cle_case: str) -> None:
+    """Met à jour la sélection en session quand une case est cochée ou décochée."""
+    st.session_state[cle_selection] = mettre_a_jour_selection(
+        st.session_state[cle_selection], chemin, st.session_state[cle_case]
+    )
 
-    Un sous-dossier n'est parcouru sur le serveur que si l'admin coche
-    "Explorer" pour ce sous-dossier precis (chargement a la demande,
-    niveau par niveau), pour rester rapide meme sur de gros dossiers.
 
-    Les cases sont ajoutees a st.session_state via leur cle
-    (prefixe_cle + chemin de l'element), relue au moment de la
-    validation du formulaire correspondant.
+def _sur_bouton_dossier(cle_ouverts: str, chemin: str) -> None:
+    """Ouvre un dossier s'il est fermé, le ferme sinon."""
+    ouverts = st.session_state[cle_ouverts]
+    if chemin in ouverts:
+        ouverts.remove(chemin)
+    else:
+        ouverts.add(chemin)
+
+
+def _retirer_de_la_selection(cle_selection: str, chemin: str) -> None:
+    """Retire un chemin de la sélection (bouton Retirer du récapitulatif)."""
+    st.session_state[cle_selection] = mettre_a_jour_selection(
+        st.session_state[cle_selection], chemin, False
+    )
+
+
+def lire_selection(prefixe_cle: str) -> list:
+    """Renvoie la liste triée des chemins cochés pour ce formulaire."""
+    return sorted(st.session_state.get(f"{prefixe_cle}selection", set()))
+
+
+def _colonnes_ligne(profondeur: int):
     """
+    Découpe une ligne en un décalage vide, une colonne pour le chevron et
+    une colonne pour le contenu. Renvoie (colonne_chevron, colonne_contenu).
+
+    Le total des poids est toujours le même (31) : le décalage d'un niveau
+    correspond donc à la largeur d'un chevron, et les éléments d'un dossier
+    s'alignent sous le nom de ce dossier.
+    """
+    profondeur = min(profondeur, 25)
+    poids = ([profondeur] if profondeur > 0 else []) + [1, 30 - profondeur]
+    colonnes = st.columns(poids, vertical_alignment="center", gap="small")
+    return colonnes[-2], colonnes[-1]
+
+
+def _afficher_niveau(chemin: str, prefixe_cle: str, profondeur: int) -> None:
+    """
+    Affiche un dossier : une ligne par élément (chevron pour les dossiers,
+    case à cocher pour tous). Si un dossier est ouvert, son contenu est
+    affiché juste en dessous, décalé d'un cran vers la droite.
+    """
+    cle_selection = f"{prefixe_cle}selection"
+    cle_ouverts = f"{prefixe_cle}ouverts"
+
+    # Un seul niveau est lu sur le serveur à chaque appel
     elements = list_folder_contents(chemin)
-    if not elements and profondeur == 0:
-        st.info("Aucun dataset trouvé sur le serveur.")
+    if not elements:
+        if profondeur == 0:
+            st.info("Aucun dataset trouvé sur le serveur.")
+        else:
+            _, colonne_contenu = _colonnes_ligne(profondeur)
+            colonne_contenu.caption("Dossier vide ou inaccessible.")
+        return
 
     for element in elements:
-        indentation = "    " * profondeur
-        cle = f"{prefixe_cle}{element['chemin']}"
+        chemin_element = element["chemin"]
+        cle_case = f"{prefixe_cle}case_{chemin_element}"
+        est_ouvert = chemin_element in st.session_state[cle_ouverts]
 
-        if not element["est_dossier"]:
-            # Fichier : une seule case a cocher, pas d'exploration possible.
-            st.checkbox(
-                f"{indentation}{element['nom']}",
-                value=element["chemin"] in deja_autorises,
-                key=cle,
-            )
-            continue
+        # L'état de la case est recalculé à partir de la sélection à chaque
+        # affichage : ainsi, retirer un élément depuis le récapitulatif
+        # décoche aussi sa case dans la liste.
+        st.session_state[cle_case] = chemin_element in st.session_state[cle_selection]
 
-        # Dossier : une case pour l'autoriser, et une case "Explorer" pour
-        # charger son contenu (un seul niveau a la fois).
-        colonne_case, colonne_exploration = st.columns([4, 1])
+        colonne_chevron, colonne_case = _colonnes_ligne(profondeur)
+        with colonne_chevron:
+            # Chevron réservé aux dossiers (les fichiers n'ont pas de bouton)
+            if element["est_dossier"]:
+                st.button(
+                    "",
+                    key=f"{prefixe_cle}chevron_{chemin_element}",
+                    icon=":material/expand_more:" if est_ouvert else ":material/chevron_right:",
+                    type="tertiary",
+                    help="Replier ce dossier" if est_ouvert else "Déplier ce dossier",
+                    on_click=_sur_bouton_dossier,
+                    args=(cle_ouverts, chemin_element),
+                )
         with colonne_case:
+            # Un "/" final distingue les dossiers des fichiers.
+            libelle = element["nom"] + ("/" if element["est_dossier"] else "")
             st.checkbox(
-                f"{indentation}{element['nom']}",
-                value=element["chemin"] in deja_autorises,
-                key=cle,
+                libelle,
+                key=cle_case,
+                on_change=_sur_case_modifiee,
+                args=(cle_selection, chemin_element, cle_case),
             )
-        with colonne_exploration:
-            explorer = st.checkbox(
-                "Explorer",
-                key=f"explorer_{cle}",
-            )
-        if explorer:
-            afficher_arborescence_datasets(
-                element["chemin"], prefixe_cle, deja_autorises, profondeur + 1
-            )
+
+        # Contenu du dossier ouvert, un cran plus à droite
+        if element["est_dossier"] and est_ouvert:
+            _afficher_niveau(chemin_element, prefixe_cle, profondeur + 1)
+
+
+def afficher_arborescence_datasets(racine: str, prefixe_cle: str,
+                                    deja_autorises: list) -> None:
+    """
+    Affiche les datasets du serveur sous forme d'arborescence à plat : un
+    dossier se déplie ou se replie avec son chevron, et son contenu est
+    indenté sous lui. Un récapitulatif des éléments sélectionnés (avec un
+    bouton pour retirer chacun d'eux) est affiché sous l'arborescence.
+
+    Le contenu d'un dossier n'est lu sur le serveur que lorsqu'il est
+    déplié. La sélection et la liste des dossiers dépliés sont mémorisées
+    en session (prefixe_cle + "selection" et prefixe_cle + "ouverts"),
+    donc replier un dossier ne fait perdre aucune case cochée.
+    """
+    cle_selection = f"{prefixe_cle}selection"
+    st.session_state.setdefault(cle_selection, set(deja_autorises))
+    st.session_state.setdefault(f"{prefixe_cle}ouverts", set())
+
+    _afficher_niveau(racine, prefixe_cle, 0)
+
+    # Récapitulatif de la sélection (chemins affichés sans la racine)
+    selection = sorted(st.session_state[cle_selection])
+    with st.expander(f"Datasets sélectionnés ({len(selection)})", expanded=True):
+        if not selection:
+            st.caption("Aucun dataset sélectionné.")
+        for chemin_selectionne in selection:
+            colonne_nom, colonne_retirer = st.columns([8, 1], vertical_alignment="center")
+            with colonne_nom:
+                st.text(chemin_relatif(racine, chemin_selectionne))
+            with colonne_retirer:
+                st.button(
+                    "Retirer",
+                    key=f"{prefixe_cle}retirer_{chemin_selectionne}",
+                    on_click=_retirer_de_la_selection,
+                    args=(cle_selection, chemin_selectionne),
+                )
+
 
 
 # ---------------------------------------------------------------------------
@@ -202,44 +301,32 @@ def render_add_single(users) -> None:
 
     fid = st.session_state["ajout_form_id"]
 
-    with st.form(f"form_ajout_user_{fid}"):
-        new_nom = st.text_input("Nom", key=f"ajout_nom_{fid}")
-        new_prenom = st.text_input("Prénom", key=f"ajout_prenom_{fid}")
-        new_email = st.text_input("Email (optionnel)", key=f"ajout_email_{fid}")
-        new_username = st.text_input(
-            "Nom d'utilisateur (identifiant de connexion)", key=f"ajout_username_{fid}"
-        )
-        new_password = st.text_input(
-            "Mot de passe", type="password", key=f"ajout_password_{fid}"
-        )
-        new_password_confirm = st.text_input(
-            "Confirmer le mot de passe",
-            type="password",
-            key=f"ajout_password_confirm_{fid}",
-        )
-        new_role = st.selectbox("Role", list(ROLES), key=f"ajout_role_{fid}")
+    new_nom = st.text_input("Nom", key=f"ajout_nom_{fid}")
+    new_prenom = st.text_input("Prénom", key=f"ajout_prenom_{fid}")
+    new_email = st.text_input("Email (optionnel)", key=f"ajout_email_{fid}")
+    new_username = st.text_input(
+        "Nom d'utilisateur (identifiant de connexion)", key=f"ajout_username_{fid}"
+    )
+    new_password = st.text_input(
+        "Mot de passe", type="password", key=f"ajout_password_{fid}"
+    )
+    new_password_confirm = st.text_input(
+        "Confirmer le mot de passe",
+        type="password",
+        key=f"ajout_password_confirm_{fid}",
+    )
+    new_role = st.selectbox("Rôle", list(ROLES), key=f"ajout_role_{fid}")
 
-        ajout_submit = st.form_submit_button("Créer le compte")
-
-    # Selection des datasets : affichee sous le formulaire, mais toujours
-    # HORS de celui-ci. A l'interieur d'un st.form, aucun widget ne
-    # provoque de rafraichissement tant que le formulaire n'est pas
-    # valide : deplier un sous-dossier n'aurait donc aucun effet visible
-    # avant la creation du compte.
+    # Sélection des datasets, aucun n'est coché au départ.
     st.write("Datasets autorisés")
     prefixe_dataset = f"ajout_dataset_{fid}_"
     afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, [])
 
-    if not ajout_submit:
+    # Le bouton est en dernière position, sous les datasets.
+    if not st.button("Créer le compte", type="primary", key=f"ajout_submit_{fid}"):
         return
 
-    # Les datasets coches sont recuperes a partir des cases affichees
-    # ci-dessus, en repérant leurs cles par prefixe.
-    new_datasets_access = [
-        cle[len(prefixe_dataset):]
-        for cle, valeur in st.session_state.items()
-        if cle.startswith(prefixe_dataset) and valeur
-    ]
+    new_datasets_access = lire_selection(prefixe_dataset)
 
     # Validation faite dans modules/users.py : testable sans Streamlit.
     error = validate_new_user(
@@ -276,7 +363,7 @@ def render_add_single(users) -> None:
 
 
 def render_import_result(result: dict) -> None:
-    """Bilan affiche après un import, avec le récapitulatif à télécharger."""
+    """Bilan affiché après un import, avec le nombre de comptes en attente."""
     if result["created_count"]:
         st.success(f"{result['created_count']} compte(s) créé(s).")
     else:
@@ -286,18 +373,13 @@ def render_import_result(result: dict) -> None:
         st.warning(f"{len(result['rejected'])} ligne(s) rejetée(s) :")
         st.dataframe(result["rejected"], width="stretch", hide_index=True)
 
-    if result["created_count"]:
+    # Comptes créés sans mot de passe : l'admin doit les compléter à la main
+    if result["pending_count"]:
         st.warning(
-            "Le fichier ci-dessous contient les mots de passe temporaires en "
-            "clair. Téléchargez-le maintenant : une fois que vous aurez cliqué "
-            "sur Terminer, il ne sera plus récupérable."
-        )
-        st.download_button(
-            "Télécharger le récapitulatif (identifiants et mots de passe)",
-            data=result["recap_csv"],
-            file_name="recapitulatif_import_utilisateurs.csv",
-            mime="text/csv",
-            on_click="ignore",
+            f"{result['pending_count']} compte(s) sont en attente : ils ne "
+            "peuvent pas se connecter tant qu'un mot de passe n'a pas été "
+            "défini. Rendez-vous dans l'onglet Comptes utilisateurs, "
+            "sélectionnez chaque compte puis utilisez la section Mot de passe."
         )
 
     if st.button("Terminer et faire un nouvel import", type="primary"):
@@ -314,10 +396,11 @@ def render_add_csv(users) -> None:
     import_id = st.session_state["import_id"]
 
     st.write(
-        "Créez plusieurs comptes d'un coup à partir d'un fichier CSV. Le mot "
-        "de passe n'est pas dans le fichier : un mot de passe temporaire est "
-        "généré pour chaque compte, et vous récuperez la liste à la fin de "
-        "l'import."
+        "Créez plusieurs comptes d'un coup à partir d'un fichier CSV. La "
+        "colonne password est optionnelle : si elle est vide, le compte est "
+        "créé en attente et vous définirez son mot de passe ensuite depuis "
+        "l'onglet Comptes utilisateurs. Pensez à supprimer le fichier de "
+        "votre poste s'il contient des mots de passe."
     )
     st.download_button(
         "Télécharger le modèle CSV",
@@ -378,8 +461,9 @@ def render_add_csv(users) -> None:
 
         st.session_state["import_result"] = {
             "created_count": len(created),
+            # Comptes créés sans mot de passe (à compléter par l'admin)
+            "pending_count": sum(1 for c in created if not c["mot_de_passe_defini"]),
             "rejected": rejected_rows + failed,
-            "recap_csv": build_recap_csv(created) if created else b"",
         }
         # Nouvelle cle pour vider le file_uploader et l'editeur.
         st.session_state["import_id"] += 1
@@ -396,48 +480,70 @@ def render_accounts(users) -> None:
 
     st.subheader("Comptes utilisateurs")
 
-    all_users = list(users.find({}))
+    # Tri par _id : l'ordre des comptes (donc la position des lignes du
+    # tableau) reste stable, même si un identifiant est modifié.
+    all_users = list(users.find({}).sort("_id", 1))
 
     st.write("Nombre de comptes : " + str(len(all_users)))
-
-    rows = []
-    for u in all_users:
-        rows.append(
-            {
-                "nom": u.get("nom", ""),
-                "prenom": u.get("prenom", ""),
-                "email": u.get("email", ""),
-                "username": u.get("username", ""),
-                "role": u.get("role", ""),
-                "datasets_access": ", ".join(u.get("datasets_access", [])),
-                "created_at": format_date(u.get("created_at")),
-            }
-        )
-
-    st.dataframe(rows, width="stretch")
-
-    st.divider()
-    st.write("Sélectionner un compte pour le modifier ou le supprimer")
 
     if len(all_users) == 0:
         st.info("Aucun compte à gérer.")
         return
 
-    usernames = [u["username"] for u in all_users]
+    # Une ligne par compte. Les datasets sont résumés par leur nombre : la
+    # liste complète s'affiche sous le tableau quand on clique sur une ligne.
+    rows = []
+    for u in all_users:
+        rows.append(
+            {
+                "Nom": u.get("nom", ""),
+                "Prénom": u.get("prenom", ""),
+                "Email": u.get("email") or "",
+                "Identifiant": u.get("username", ""),
+                "Rôle": u.get("role", ""),
+                "Nb datasets": len(u.get("datasets_access", [])),
+                "Statut": "En attente de mot de passe" if is_password_pending(u) else "Actif",
+                "Créé le": format_date(u.get("created_at")),
+            }
+        )
 
-    # Le selectbox est pilote par session_state pour pouvoir suivre un compte
-    # renomme, et retomber sur le premier compte si celui qui etait
-    # selectionne vient d'etre supprime. Ces affectations doivent avoir lieu
-    # avant la creation du widget.
-    pending = st.session_state.pop("pending_selected_username", None)
-    if pending in usernames:
-        st.session_state["compte_selectionne"] = pending
-    elif st.session_state.get("compte_selectionne") not in usernames:
-        st.session_state["compte_selectionne"] = usernames[0]
+    # Un clic sur une ligne sélectionne le compte. La clé du tableau change
+    # après une suppression (voir dialog_delete_user) pour effacer la sélection.
+    evenement = st.dataframe(
+        rows,
+        width="stretch",
+        hide_index=True,
+        placeholder="",
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"table_comptes_{st.session_state['comptes_table_id']}",
+    )
+    lignes_selectionnees = evenement.selection.rows
 
-    selected_username = st.selectbox("Compte", usernames, key="compte_selectionne")
-    selected_user = users.find_one({"username": selected_username})
+    if not lignes_selectionnees or lignes_selectionnees[0] >= len(all_users):
+        st.info("Cliquez sur une ligne du tableau pour consulter, modifier ou supprimer un compte.")
+        return
+
+    selected_user = all_users[lignes_selectionnees[0]]
+    selected_username = selected_user["username"]
     uid = str(selected_user["_id"])
+
+    # -- Détail du compte sélectionné ----------------------------------------
+    st.divider()
+    st.markdown("### Compte sélectionné : " + selected_username)
+
+    # Datasets enregistrés en base, affichés sans la racine, un par ligne
+    datasets_actuels = selected_user.get("datasets_access", [])
+    st.write(f"Datasets actuellement autorisés ({len(datasets_actuels)})")
+    if datasets_actuels:
+        st.text(
+            "\n".join(
+                chemin_relatif(DATASETS_REMOTE_PATH, chemin)
+                for chemin in sorted(datasets_actuels)
+            )
+        )
+    else:
+        st.caption("Aucun dataset autorisé.")
 
     current_username = st.session_state.get("username")
     nb_admins = users.count_documents({"role": "admin"})
@@ -447,47 +553,42 @@ def render_accounts(users) -> None:
 
     # Les cles contiennent l'_id du compte : elles restent stables meme si
     # le username est modifie, et ne se melangent pas d'un compte a l'autre.
-    with st.form(f"form_modifier_user_{uid}"):
-        edit_username = st.text_input(
-            "Nom d'utilisateur (identifiant de connexion)",
-            value=selected_user.get("username", ""),
-            key=f"edit_username_{uid}",
-        )
-        edit_nom = st.text_input(
-            "Nom", value=selected_user.get("nom", ""), key=f"edit_nom_{uid}"
-        )
-        edit_prenom = st.text_input(
-            "Prénom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
-        )
-        edit_email = st.text_input(
-            "Email",
-            value=selected_user.get("email", "") or "",
-            key=f"edit_email_{uid}",
-        )
-        edit_role = st.selectbox(
-            "Rôle",
-            list(ROLES),
-            index=list(ROLES).index(selected_user.get("role", "user")),
-            key=f"edit_role_{uid}",
-        )
-        modifier_submit = st.form_submit_button("Enregistrer les modifications")
+    edit_username = st.text_input(
+        "Nom d'utilisateur (identifiant de connexion)",
+        value=selected_user.get("username", ""),
+        key=f"edit_username_{uid}",
+    )
+    edit_nom = st.text_input(
+        "Nom", value=selected_user.get("nom", ""), key=f"edit_nom_{uid}"
+    )
+    edit_prenom = st.text_input(
+        "Prénom", value=selected_user.get("prenom", ""), key=f"edit_prenom_{uid}"
+    )
+    edit_email = st.text_input(
+        "Email",
+        value=selected_user.get("email", "") or "",
+        key=f"edit_email_{uid}",
+    )
+    edit_role = st.selectbox(
+        "Rôle",
+        list(ROLES),
+        index=list(ROLES).index(selected_user.get("role", "user")),
+        key=f"edit_role_{uid}",
+    )
 
-    # Selection des datasets : affichee sous le formulaire, mais toujours
-    # HORS de celui-ci (voir le commentaire dans render_add_single).
-    # Precochee selon les datasets deja autorises pour ce compte.
+    # Sélection des datasets, précochée selon ceux déjà autorisés.
     st.write("Datasets autorisés")
     deja_autorises = selected_user.get("datasets_access", [])
     prefixe_dataset = f"edit_dataset_{uid}_"
     afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, deja_autorises)
 
+    # Le bouton est en dernière position, sous les datasets.
+    modifier_submit = st.button(
+        "Enregistrer les modifications", type="primary", key=f"edit_submit_{uid}"
+    )
+
     if modifier_submit:
-        # Les datasets coches sont recuperes a partir des cases affichees
-        # plus haut, hors du formulaire, en repérant leurs cles par prefixe.
-        edit_datasets_access = [
-            cle[len(prefixe_dataset):]
-            for cle, valeur in st.session_state.items()
-            if cle.startswith(prefixe_dataset) and valeur
-        ]
+        edit_datasets_access = lire_selection(prefixe_dataset)
         error = validate_user_update(
             users, selected_user, edit_username, edit_nom, edit_prenom, edit_role, nb_admins
         )
@@ -517,13 +618,56 @@ def render_accounts(users) -> None:
                     # corrects.
                     if selected_username == current_username:
                         st.session_state["username"] = new_username
-                    st.session_state["pending_selected_username"] = new_username
+                    # La sélection sera relue depuis la base au prochain affichage.
+                    st.session_state.pop(f"{prefixe_dataset}selection", None)
+                    st.session_state.pop(f"{prefixe_dataset}ouverts", None)
                     flash(
                         "success",
                         "Compte modifié avec succès : " + new_username,
                         "comptes",
                     )
                     st.rerun()
+
+    # -- Mot de passe -------------------------------------------------------
+    st.markdown("### Mot de passe")
+
+    if is_password_pending(selected_user):
+        st.info(
+            "Ce compte est en attente : il ne peut pas se connecter tant "
+            "qu'un mot de passe n'a pas été défini."
+        )
+    else:
+        st.caption(
+            "Le mot de passe actuel n'est pas consultable. En saisir un "
+            "nouveau ci-dessous remplacera l'ancien."
+        )
+
+    # Le formulaire se vide tout seul après validation (clear_on_submit),
+    # pour ne pas laisser le mot de passe affiché dans les champs.
+    with st.form(f"password_form_{uid}", clear_on_submit=True):
+        new_password = st.text_input(
+            "Nouveau mot de passe", type="password", key=f"pwd_new_{uid}"
+        )
+        new_password_confirm = st.text_input(
+            "Confirmer le nouveau mot de passe",
+            type="password",
+            key=f"pwd_confirm_{uid}",
+        )
+        password_submit = st.form_submit_button("Définir le mot de passe", type="primary")
+
+    if password_submit:
+        error = validate_new_password(new_password, new_password_confirm)
+        if error:
+            st.error(error)
+        elif reset_password(users, selected_user["_id"], new_password):
+            flash(
+                "success",
+                "Mot de passe défini pour le compte : " + selected_username,
+                "comptes",
+            )
+            st.rerun()
+        else:
+            st.error("Ce compte n'existe plus.")
 
     # -- Suppression --------------------------------------------------------
     st.markdown("### Supprimer le compte")

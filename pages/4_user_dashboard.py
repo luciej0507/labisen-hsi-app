@@ -8,9 +8,9 @@ import streamlit as st
 
 from modules.auth import require_role
 from ui.sidebar import render_sidebar
-from ui.topnav import render_topnav
+from ui.topnav import configurer_page, render_topnav
 
-st.set_page_config(page_title="Mon Espace", layout="wide")
+configurer_page("Mon Espace")
 
 render_topnav("Espace de travail")
 
