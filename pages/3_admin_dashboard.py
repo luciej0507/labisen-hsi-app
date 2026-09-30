@@ -54,7 +54,7 @@ require_role("admin")
 
 
 # ---------------------------------------------------------------------------
-# Etat de session propre a cette page
+# Etat de session propre à cette page
 # ---------------------------------------------------------------------------
 
 # ajout_form_id : compteur qui change les cles des widgets du formulaire

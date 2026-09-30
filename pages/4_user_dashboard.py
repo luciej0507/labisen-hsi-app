@@ -21,4 +21,4 @@ require_role("user")
 render_sidebar("Accueil")
 
 st.title("Mon Espace")
-st.write("À venir")
+st.write("En projet")

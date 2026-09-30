@@ -15,4 +15,4 @@ require_role("user")
 render_sidebar("Apprentissage")
 
 st.title("Apprentissage")
-st.write("À venir")
+st.write("Prochainement")

@@ -15,4 +15,4 @@ require_role("user")
 render_sidebar("Acquisition")
 
 st.title("Acquisition")
-st.write("À venir")
+st.write("En projet")
