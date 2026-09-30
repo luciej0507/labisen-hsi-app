@@ -5,6 +5,8 @@ __pycache__/
 assets/
 .env
 memo.txt
+
+# Sauvegarde de la base de données mongo
 dump_mongo/
 
 # Fichiers générés par les tests
