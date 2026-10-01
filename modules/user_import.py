@@ -196,6 +196,24 @@ def validate_rows(df: pd.DataFrame, existing_usernames: set) -> tuple:
     return valid, rejected
 
 
+def build_status_table(valid: list, rejected: list) -> list:
+    """
+    Construit le tableau de contrôle : une entrée par ligne du fichier,
+    avec "OK" ou le motif du rejet, triée par numéro de ligne.
+    """
+    # Lignes valides : statut "OK"
+    table = [
+        {"ligne": r["ligne"], "username": r["username"], "statut": "OK"}
+        for r in valid
+    ]
+    # Lignes rejetées : le statut est le motif
+    table += [
+        {"ligne": r["ligne"], "username": r["username"], "statut": r["motif"]}
+        for r in rejected
+    ]
+    return sorted(table, key=lambda r: r["ligne"])
+
+
 def build_template_csv() -> bytes:
     """Modèle CSV téléchargeable (séparateur ";" et BOM pour Excel)."""
     example = pd.DataFrame(

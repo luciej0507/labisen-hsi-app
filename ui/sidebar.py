@@ -1,25 +1,37 @@
 """
-modules/sidebar.py : menu latéral de l'espace utilisateur.
+ui/sidebar.py : menu latéral des espaces utilisateur et administrateur.
 
-S'ajoute au menu horizontal du haut (modules/topnav.py) sur les pages de
-l'espace utilisateur. À appeler après render_topnav() et require_role(),
-en indiquant le libellé de la section courante :
+S'ajoute au menu horizontal du haut (ui/topnav.py) sur les pages
+concernées. À appeler après render_topnav() et require_role(), en
+indiquant le libellé de la section courante :
 
+    # Espace utilisateur (valeurs par défaut)
     render_sidebar("Acquisition")
 
+    # Espace administrateur
+    render_sidebar("Reporting", SECTIONS_ADMIN, "Administration")
+
 Pour ajouter une section : créer la page dans pages/, puis ajouter une
-ligne dans SECTIONS_UTILISATEUR.
+ligne dans la liste de sections correspondante.
 """
 
 import streamlit as st
 
-# Sections du menu : (chemin du fichier, libellé, icône Material).
+# Sections du menu utilisateur : (chemin du fichier, libellé, icône Material).
 # Les chemins sont relatifs au fichier d'entrée de l'appli (app.py).
 SECTIONS_UTILISATEUR = [
     ("pages/4_user_dashboard.py", "Accueil", ":material/home:"),
     ("pages/4a_acquisition.py", "Acquisition", ":material/photo_camera:"),
     ("pages/4b_gestion_bdd.py", "Gestion des BDD", ":material/database:"),
     ("pages/4c_apprentissage.py", "Apprentissage", ":material/model_training:"),
+]
+
+# Sections du menu administrateur, même format.
+SECTIONS_ADMIN = [
+    ("pages/3_admin_dashboard.py", "Accueil", ":material/home:"),
+    ("pages/3a_ajout_utilisateur.py", "Ajout utilisateur", ":material/person_add:"),
+    ("pages/3b_comptes_utilisateurs.py", "Comptes utilisateurs", ":material/group:"),
+    ("pages/3c_reporting.py", "Reporting", ":material/bar_chart:"),
 ]
 
 # Style du menu latéral. La variable --accent est définie dans topnav.py.
@@ -34,22 +46,29 @@ CSS = """
 """
 
 
-def render_sidebar(page_courante: str) -> None:
+def render_sidebar(
+    page_courante: str,
+    sections: list = SECTIONS_UTILISATEUR,
+    titre: str = "Espace de travail",
+) -> None:
     """
-    Affiche le menu latéral de l'espace utilisateur.
+    Affiche le menu latéral.
 
     Args:
-        page_courante: libellé de la section affichée ("Accueil",
-            "Acquisition", "Gestion des BDD" ou "Apprentissage"). Le lien
-            correspondant est mis en avant en rouge.
+        page_courante: libellé de la section affichée (par exemple
+            "Acquisition" ou "Reporting"). Le lien correspondant est mis
+            en avant en rouge.
+        sections: liste des sections à afficher (SECTIONS_UTILISATEUR par
+            défaut, ou SECTIONS_ADMIN).
+        titre: titre affiché en haut du menu.
     """
     st.html(f"<style>{CSS}</style>")
 
     with st.sidebar:
-        st.markdown("#### Espace de travail")
+        st.markdown(f"#### {titre}")
 
         with st.container(key="menu_lateral"):
-            for i, (chemin, libelle, icone) in enumerate(SECTIONS_UTILISATEUR):
+            for i, (chemin, libelle, icone) in enumerate(sections):
                 # La clé contient "actif" pour la section courante : c'est
                 # ce que le CSS utilise pour la mettre en avant.
                 cle = f"side_actif_{i}" if libelle == page_courante else f"side_{i}"
