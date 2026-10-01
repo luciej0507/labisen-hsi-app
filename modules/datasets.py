@@ -235,9 +235,6 @@ def _stats_split(sftp, split_chemin):
     rgb_png = _bases(sftp, split_chemin, "RGB/PNG", ".png")
     rgb_tiff = _bases(sftp, split_chemin, "RGB/TIFF", ".tiff")
     ann_png = _bases(sftp, split_chemin, "Annotation/PNG", ".png")
-    # Le JSON d'annotation est un fichier par split (et non par cube) :
-    # on vérifie seulement qu'il y en a au moins un dans le dossier
-    ann_json = _bases(sftp, split_chemin, "Annotation/JSON", ".json")
  
     # Un cube est annoté si son masque png existe (même nom de base que le cube)
     annotes = cubes & ann_png
@@ -248,7 +245,6 @@ def _stats_split(sftp, split_chemin):
         "cubes": len(cubes),
         "annotes": len(annotes),
         "incomplets": len(cubes - fichiers_ok),
-        "json_manquant": len(ann_json) == 0,
     }
  
  
@@ -258,19 +254,60 @@ def _resultat(etat, splits=None):
     total = sum(s["cubes"] for s in splits.values())
     annotes = sum(s["annotes"] for s in splits.values())
     incomplets = sum(s["incomplets"] for s in splits.values())
-    # Noms des splits dont le dossier Annotation/JSON ne contient aucun .json
-    splits_sans_json = [nom for nom, s in splits.items() if s["json_manquant"]]
     return {
         "etat": etat,
         "cubes_par_split": {nom: s["cubes"] for nom, s in splits.items()},
         "total_cubes": total,
         "annotes": annotes,
         "incomplets": incomplets,
-        "splits_sans_json": splits_sans_json,
         "taches": [],
     }
  
  
+def etat_split(cubes_par_split: dict) -> str:
+    """
+    Renvoie l'état du split Train/Test/Val : "Fait", "Incomplet" ou "Non fait".
+
+    - "Fait" : les 3 splits contiennent au moins un cube.
+    - "Incomplet" : au moins un split contient des cubes, mais pas les 3.
+    - "Non fait" : aucun split ne contient de cube.
+
+    Un split dont le dossier est absent compte comme un split sans cube.
+    """
+    # Splits qui contiennent au moins un cube (.get gère les dossiers absents)
+    remplis = [nom for nom in SPLITS if cubes_par_split.get(nom, 0) > 0]
+
+    if len(remplis) == len(SPLITS):
+        return "Fait"
+    if remplis:
+        return "Incomplet"
+    return "Non fait"
+
+
+def tache_split(cubes_par_split: dict):
+    """
+    Renvoie le texte de la tâche liée au split, ou None si le split est fait.
+
+    Pour un split incomplet, le texte distingue les dossiers absents
+    des dossiers présents mais vides.
+    """
+    etat = etat_split(cubes_par_split)
+    if etat == "Fait":
+        return None
+    if etat == "Non fait":
+        return "Split Train/Test/Val à faire"
+
+    # Split incomplet : on précise ce qui manque
+    absents = [nom for nom in SPLITS if nom not in cubes_par_split]
+    vides = [nom for nom in SPLITS if cubes_par_split.get(nom) == 0]
+    details = []
+    if absents:
+        details.append("dossier absent : " + ", ".join(absents))
+    if vides:
+        details.append("dossier vide : " + ", ".join(vides))
+    return "Split incomplet (" + "; ".join(details) + ")"
+
+
 def calculer_stats(chemin_dataset: str) -> dict:
     """
     Calcule les stats d'un dataset à partir de sa structure sur le serveur.
@@ -283,7 +320,6 @@ def calculer_stats(chemin_dataset: str) -> dict:
         que le dataset soit complet (vide si "Complet")
       - "cubes_par_split" : nombre de cubes HSI par split trouvé
       - "total_cubes", "annotes", "incomplets" : totaux sur tous les splits
-      - "splits_sans_json" : splits dont Annotation/JSON ne contient aucun .json
     """
     try:
         sftp = _obtenir_sftp()
@@ -304,10 +340,6 @@ def calculer_stats(chemin_dataset: str) -> dict:
 
     resultat = _resultat("", splits)
  
-    # Le split est fait si les 3 dossiers existent et contiennent des cubes
-    split_fait = len(splits) == len(SPLITS) and all(
-        s["cubes"] > 0 for s in splits.values()
-    )
  
     # Dossier sans aucun split : il n'y a rien d'autre à évaluer
     if not splits:
@@ -317,8 +349,9 @@ def calculer_stats(chemin_dataset: str) -> dict:
     # Liste de TOUT ce qui reste à faire : chaque problème est détecté
     # indépendamment des autres, sans ordre de priorité
     taches = []
-    if not split_fait:
-        taches.append("Split Train/Test/Val à faire")
+    message_split = tache_split(resultat["cubes_par_split"])
+    if message_split:
+        taches.append(message_split)
     if resultat["incomplets"] > 0:
         taches.append(
             f"{resultat['incomplets']} cube(s) avec des fichiers manquants"
@@ -326,11 +359,6 @@ def calculer_stats(chemin_dataset: str) -> dict:
     masques_manquants = resultat["total_cubes"] - resultat["annotes"]
     if masques_manquants > 0:
         taches.append(f"{masques_manquants} masque(s) d'annotation manquant(s)")
-    if resultat["splits_sans_json"]:
-        taches.append(
-            "JSON d'annotation manquant pour : "
-            + ", ".join(resultat["splits_sans_json"])
-        )
 
     # Le dataset est complet seulement s'il n'y a plus rien à faire
     resultat["taches"] = taches

@@ -6,6 +6,7 @@ projet (dossier parent). Chaque dataset a sa carte, avec son état et des
 statistiques calculées sur le serveur de l'école.
 """
 
+import hashlib
 import os
 
 import streamlit as st
@@ -13,9 +14,9 @@ import streamlit as st
 from modules.auth import require_role
 from modules.datasets import (
     DATASETS_REMOTE_PATH,
-    SPLITS,
     calculer_stats,
     chemin_relatif,
+    etat_split,
     get_datasets_autorises,
 )
 from modules.db_mongo import get_users_collection
@@ -40,6 +41,31 @@ COULEURS_ETAT = {
     "Serveur injoignable": "red",
 }
 
+# Style des cartes. Chaque conteneur créé avec une clé reçoit une classe CSS
+# "st-key-<clé>" : on s'en sert pour colorer le bandeau et l'encadré de stats.
+# Les couleurs sont semi-transparentes pour rester lisibles en thème clair
+# comme en thème sombre.
+STYLE_CARTES = """
+<style>
+/* Bandeau d'en-tête : espacement et coins arrondis */
+div[class*="st-key-entete-"] {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+}
+/* Couleur du bandeau selon l'état (mêmes couleurs que les badges) */
+div[class*="st-key-entete-green"] { background-color: rgba(33, 195, 84, 0.15); }
+div[class*="st-key-entete-orange"] { background-color: rgba(255, 140, 0, 0.15); }
+div[class*="st-key-entete-red"] { background-color: rgba(255, 75, 75, 0.15); }
+div[class*="st-key-entete-gray"] { background-color: rgba(128, 128, 128, 0.15); }
+/* Encadré des statistiques : fond gris très discret */
+div[class*="st-key-stats-"] {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background-color: rgba(128, 128, 128, 0.08);
+}
+</style>
+"""
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def stats_en_cache(chemin: str) -> dict:
@@ -56,22 +82,39 @@ def stats_en_cache(chemin: str) -> dict:
     return stats
 
 
-def afficher_carte(chemin: str) -> None:
-    """Affiche la carte compacte d'un dataset : nom, état et statistiques."""
-    with st.container(border=True):
-        # Le nom du dataset est le dernier morceau du chemin
-        st.markdown("**" + os.path.basename(chemin.rstrip("/")) + "**")
+def afficher_entete(nom: str, etat: str, cle: str) -> None:
+    """
+    Affiche le bandeau coloré de la carte : nom du dataset à gauche, badge
+    d'état à droite. La couleur du fond suit l'état (voir STYLE_CARTES).
+    """
+    couleur = COULEURS_ETAT.get(etat, "gray")
+    # La clé donne au conteneur une classe CSS "st-key-entete-<couleur>-..."
+    with st.container(key=f"entete-{couleur}-{cle}"):
+        # Deux colonnes : le nom prend plus de place que le badge
+        colonne_nom, colonne_badge = st.columns([3, 2], vertical_alignment="center")
+        colonne_nom.markdown("**" + nom + "**")
+        colonne_badge.badge(etat, color=couleur)
 
+
+def afficher_carte(chemin: str) -> None:
+    """Affiche la carte d'un dataset : bandeau, encadré de statistiques et tâches."""
+    # Le nom du dataset est le dernier morceau du chemin
+    nom = os.path.basename(chemin.rstrip("/"))
+
+    # Identifiant court et unique par carte, pour les clés des conteneurs
+    cle = hashlib.md5(chemin.encode("utf-8")).hexdigest()[:8]
+
+    with st.container(border=True):
         # Serveur injoignable : message sur cette carte uniquement
         try:
             stats = stats_en_cache(chemin)
         except ConnectionError:
-            st.badge("Serveur injoignable", color="red")
+            afficher_entete(nom, "Serveur injoignable", cle)
             st.caption("Serveur injoignable. Cliquez sur Rafraîchir pour réessayer.")
             return
 
         etat = stats["etat"]
-        st.badge(etat, color=COULEURS_ETAT.get(etat, "gray"))
+        afficher_entete(nom, etat, cle)
 
         # Cas où il n'y a aucune statistique à afficher
         if etat == "Introuvable":
@@ -87,29 +130,34 @@ def afficher_carte(chemin: str) -> None:
             )
             return
 
-        # Le split est fait si les 3 dossiers existent et contiennent des cubes
+        # État du split (Fait, Incomplet ou Non fait), règle définie dans datasets.py
         cubes_par_split = stats["cubes_par_split"]
-        split_fait = len(cubes_par_split) == len(SPLITS) and all(
-            nb > 0 for nb in cubes_par_split.values()
+        etat_du_split = etat_split(cubes_par_split)
+
+        # Détail du nombre de cubes par split, en texte gris
+        detail_split = ", ".join(
+            f"{nom_split} {nb}" for nom_split, nb in cubes_par_split.items()
         )
 
-        # Statistiques en texte court, une par ligne (deux espaces = retour à la ligne)
-        st.markdown(
-            f"Cubes HSI : **{stats['total_cubes']}**  \n"
-            f"Annotés : **{stats['annotes']}/{stats['total_cubes']}**  \n"
-            f"Split : **{'Fait' if split_fait else 'Non fait'}**"
-        )
+        # Encadré discret des statistiques, sur deux colonnes
+        # (deux espaces + retour = saut de ligne)
+        with st.container(key=f"stats-{cle}"):
+            colonne_gauche, colonne_droite = st.columns(2)
+            colonne_gauche.markdown(
+                f"Cubes HSI : **{stats['total_cubes']}**  \n"
+                f"Annotés : **{stats['annotes']}/{stats['total_cubes']}**"
+            )
+            colonne_droite.markdown(
+                f"Split : **{etat_du_split}**  \n"
+                f":gray[{detail_split}]"
+            )
 
-        # Détail du nombre de cubes par split
-        st.caption(
-            ", ".join(f"{nom} : {nb}" for nom, nb in cubes_par_split.items())
-        )
-
-        # Tout ce qui reste à faire pour que le dataset soit complet, une ligne
-        # par tâche. .get() évite une KeyError si le résultat en cache date
-        # d'avant l'ajout de cette clé : la carte s'affiche alors sans tâches.
-        for tache in stats.get("taches", []):
-            st.caption("À faire : " + tache)
+        # Bloc "À faire" sans fond, en liste à puces. .get() évite une
+        # KeyError si le résultat en cache date d'avant l'ajout de cette clé.
+        taches = stats.get("taches", [])
+        if taches:
+            liste = "\n".join("- " + tache for tache in taches)
+            st.markdown("**À faire**\n\n" + liste)
 
 
 def afficher_projet(parent: str, datasets: list) -> None:
@@ -134,6 +182,9 @@ def afficher_projet(parent: str, datasets: list) -> None:
             with colonne:
                 afficher_carte(chemin)
 
+
+# Injection du style des cartes (une seule fois par chargement de page)
+st.markdown(STYLE_CARTES, unsafe_allow_html=True)
 
 st.title("Gestion des bases de données")
 
