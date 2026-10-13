@@ -3,9 +3,9 @@
 
 
 # À faire une seule fois : rendre le script exécutable
-# chmod +x restore.sh
+# chmod +x restore_mongo.sh
 # Lancer une restauration (conteneur Mongo démarré)
-# ./restore.sh
+# ./restore_mongo.sh
 
 
 # Paramètres à modifier si besoin

@@ -145,7 +145,7 @@ def afficher_carte(chemin: str) -> None:
             colonne_gauche, colonne_droite = st.columns(2)
             colonne_gauche.markdown(
                 f"Cubes HSI : **{stats['total_cubes']}**  \n"
-                f"Annotés : **{stats['annotes']}/{stats['total_cubes']}**"
+                f"Annotation : **{stats['annotes']}/{stats['total_cubes']}**"
             )
             colonne_droite.markdown(
                 f"Split : **{etat_du_split}**  \n"

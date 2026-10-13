@@ -2,9 +2,9 @@
 # Sauvegarde de la base MongoDB du conteneur Docker vers le dossier ./dump_mongo
 
 # À faire une seule fois : rendre le script exécutable
-# chmod +x backup.sh
+# chmod +x backup_mongo.sh
 # Lancer une sauvegarde (conteneur Mongo démarré)
-# ./backup.sh
+# ./backup_mongo.sh
 
 # Paramètres à modifier si besoin
 CONTENEUR="isen_hsi_mongo"
