@@ -1,3 +1,17 @@
 .venv
 __pycache__/
+*.pyc
 *.db
+assets/
+.env
+memo.txt
+
+# Sauvegarde de la base de données mongo
+dump_mongo/
+
+# Fichiers générés par les tests
+.pytest_cache/
+__pycache__/
+*.pyc
+.coverage
+htmlcov/

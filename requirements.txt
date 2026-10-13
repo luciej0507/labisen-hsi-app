@@ -1,0 +1,9 @@
+streamlit
+python-dotenv
+spectral
+numpy
+Pillow
+tifffile
+pandas
+pymongo
+bcrypt
