@@ -1,44 +1,61 @@
 """
-user_import.py : Logique d'import de comptes utilisateurs depuis un CSV.
+user_import.py : logique d'import de comptes utilisateurs depuis un CSV.
 
 Fonctions pures : aucun appel à Streamlit ni à MongoDB ici, ce qui permet
 de les tester facilement. La page admin s'occupe de l'affichage et de
-l'insertion en base.
+l'écriture en base.
 
 Format du CSV attendu (séparateur ";" ou ",", encodage UTF-8 ou Excel) :
-    nom;prenom;email;username;role;datasets_access;password
-Colonnes obligatoires : nom, prenom, username.
-La colonne password est optionnelle : si elle est vide pour une ligne, le
-compte est créé "en attente" et l'admin définit son mot de passe ensuite
-depuis l'onglet Comptes utilisateurs.
+    nom;prenom;email;username
+Colonnes obligatoires : nom, prenom, username. La colonne email est
+optionnelle. Toute autre colonne présente dans le fichier est ignorée.
+
+Les comptes importés sont toujours créés avec le rôle "user", sans mot de
+passe et sans dataset. L'admin complète ensuite chaque compte depuis la
+page Comptes utilisateurs.
 """
 
 import csv
 import io
 import re
 import unicodedata
-from typing import Optional
 
 import pandas as pd
 
+# Rôles possibles (utilisé par le formulaire d'ajout d'un seul compte)
 ROLES = ("user", "admin")
 
-# La colonne password est en dernier et n'est pas obligatoire.
-CSV_COLUMNS = ["nom", "prenom", "email", "username", "role", "datasets_access", "password"]
+CSV_COLUMNS = ["nom", "prenom", "email", "username"]
 CSV_REQUIRED_COLUMNS = ["nom", "prenom", "username"]
 
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Email : pas d'espace, de virgule ni de point-virgule, et un point après le @
+_EMAIL_PATTERN = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
+# Statut d'une ligne après analyse
+STATUS_CREATE = "create"        # nouveau compte
+STATUS_EXISTING = "existing"    # le username existe déjà en base
+STATUS_DUPLICATE = "duplicate"  # username déjà présent plus haut dans le fichier
+STATUS_INVALID = "invalid"      # ligne à corriger dans le tableau
+STATUS_EMPTY = "empty"          # ligne entièrement vide (ignorée)
 
-def parse_datasets(text: Optional[str]) -> list:
-    """Transforme "a, b;c" en ["a", "b", "c"] (virgule ou point-virgule)."""
-    if not text:
-        return []
-    return [d.strip() for d in re.split(r"[;,]", text) if d.strip()]
+# Actions possibles pour une ligne (texte affiché à l'admin)
+ACTION_CREATE = "Créer"
+ACTION_UPDATE = "Mettre à jour"
+ACTION_IGNORE = "Ignorer"
+ACTION_FIX = "À corriger"
+
+# Actions autorisées selon le statut. La première est l'action par défaut.
+ALLOWED_ACTIONS = {
+    STATUS_CREATE: (ACTION_CREATE, ACTION_IGNORE),
+    STATUS_EXISTING: (ACTION_IGNORE, ACTION_UPDATE),
+    STATUS_DUPLICATE: (ACTION_IGNORE,),
+    STATUS_INVALID: (ACTION_FIX,),
+    STATUS_EMPTY: (ACTION_IGNORE,),
+}
 
 
 def _normalize_column_name(name) -> str:
-    """"Prénom " -> "prenom" (sans accent, minuscules, sans espaces)."""
+    """Transforme "Prénom " en "prenom" (sans accent, minuscules, sans espaces)."""
     text = unicodedata.normalize("NFKD", str(name))
     text = text.encode("ascii", "ignore").decode("ascii")
     return text.strip().lower()
@@ -78,6 +95,7 @@ def parse_csv(raw: bytes) -> pd.DataFrame:
     if not text.strip():
         raise ValueError("Le fichier est vide.")
 
+    # Le séparateur est celui qui apparaît le plus dans l'en-tête
     first_line = text.splitlines()[0]
     sep = ";" if first_line.count(";") > first_line.count(",") else ","
 
@@ -104,16 +122,17 @@ def parse_csv(raw: bytes) -> pd.DataFrame:
         for row in reader:
             if not row:
                 continue
+            # Une ligne plus longue que l'en-tête est signalée à l'admin
             if len(row) > len(header):
                 extra = row[len(header):]
                 if any(cell.strip() for cell in extra):
                     raise ValueError(
                         f"Ligne {reader.line_num} du fichier : trop de valeurs "
                         f"par rapport à l'en-tête. Si une cellule contient le "
-                        f"séparateur (par exemple plusieurs datasets), mettez-la "
-                        f"entre guillemets ou séparez ses valeurs par une virgule."
+                        f"séparateur, mettez-la entre guillemets."
                     )
                 row = row[: len(header)]
+            # Une ligne plus courte est complétée avec des valeurs vides
             data.append(row + [""] * (len(header) - len(row)))
     except csv.Error as exc:
         raise ValueError("Le fichier n'a pas pu être lu comme un CSV valide.") from exc
@@ -130,88 +149,147 @@ def parse_csv(raw: bytes) -> pd.DataFrame:
     return df
 
 
-def validate_rows(df: pd.DataFrame, existing_usernames: set) -> tuple:
+def classify_rows(df: pd.DataFrame, existing_users: list) -> list:
     """
-    Valide chaque ligne du DataFrame (déjà passé dans clean_dataframe).
+    Analyse chaque ligne du DataFrame (déjà passé dans clean_dataframe).
 
-    Retourne (valid, rejected) :
-    - valid : liste de dicts prêts à être insérés (role et datasets_access
-      normalisés, password vaut None s'il n'est pas renseigné)
-    - rejected : liste de dicts {"ligne", "username", "motif"}
+    existing_users : liste de dicts avec les clés "username" et "email"
+    (les comptes déjà présents en base).
+
+    Retourne une liste de dicts, un par ligne, avec les clés :
+    ligne, nom, prenom, email, username, statut, motif, action.
+    - statut : STATUS_CREATE, STATUS_EXISTING, STATUS_DUPLICATE,
+      STATUS_INVALID ou STATUS_EMPTY
+    - motif : texte expliquant le statut, affiché à l'admin
+    - action : action proposée par défaut (modifiable par l'admin)
+
+    Règles :
+    - un username déjà en base donne une ligne "existant" (mise à jour possible)
+    - un username déjà vu plus haut dans le fichier donne un "doublon"
+    - un email pris par un autre compte (en base ou dans le fichier) est
+      une erreur à corriger : on ne l'écrase jamais
     """
-    valid = []
-    rejected = []
-    seen = set()
+    # Comptes en base : usernames connus et propriétaire de chaque email
+    usernames_db = set()
+    email_owner_db = {}
+    for user in existing_users:
+        if user.get("username"):
+            usernames_db.add(user["username"])
+        email = (user.get("email") or "").lower()
+        if email:
+            email_owner_db[email] = user.get("username")
 
+    # Valeurs déjà rencontrées dans le fichier (lignes non rejetées)
+    seen_usernames = set()
+    seen_emails = {}
+
+    rows = []
     for line, row in df.iterrows():
-        problems = []
         nom = row["nom"]
         prenom = row["prenom"]
         username = row["username"]
         email = row["email"]
-        role = row["role"].lower() or "user"
+        email_key = email.lower()
 
+        # Contrôles de base sur les champs
+        problems = []
         if not nom:
             problems.append("nom manquant")
         if not prenom:
             problems.append("prénom manquant")
-
         if not username:
             problems.append("identifiant manquant")
-        elif username in existing_usernames:
-            problems.append("identifiant déjà utilisé")
-        elif username in seen:
-            problems.append("identifiant en doublon dans le fichier")
-
         if email and not _EMAIL_PATTERN.match(email):
             problems.append("email invalide")
 
-        if role not in ROLES:
-            problems.append("rôle invalide (attendu : user ou admin)")
+        status = STATUS_INVALID
+        motif = ""
 
-        if problems:
-            rejected.append(
-                {
-                    "ligne": int(line),
-                    "username": username,
-                    "motif": " ; ".join(problems),
-                }
-            )
+        if not (nom or prenom or username or email):
+            # Ligne entièrement vide (par exemple tout juste ajoutée) : ignorée
+            status = STATUS_EMPTY
+            motif = "ligne vide"
+        elif problems:
+            motif = " ; ".join(problems)
+        elif username in seen_usernames:
+            # Doublon dans le fichier : la première occurrence est conservée
+            status = STATUS_DUPLICATE
+            motif = "identifiant en doublon dans le fichier"
         else:
-            seen.add(username)
-            valid.append(
-                {
-                    "ligne": int(line),
-                    "nom": nom,
-                    "prenom": prenom,
-                    "email": email or None,
-                    "username": username,
-                    "role": role,
-                    "datasets_access": parse_datasets(row["datasets_access"]),
-                    # None si la cellule est vide : compte créé en attente
-                    "password": row["password"] or None,
-                }
-            )
+            # Conflits d'email avec un autre compte (base ou fichier)
+            owner_db = email_owner_db.get(email_key)
+            if email and email_key in email_owner_db and owner_db != username:
+                problems.append("email déjà utilisé par un autre compte")
+            if email and email_key in seen_emails and seen_emails[email_key] != username:
+                problems.append("email en doublon dans le fichier")
 
-    return valid, rejected
+            if problems:
+                motif = " ; ".join(problems)
+            else:
+                seen_usernames.add(username)
+                if email:
+                    seen_emails[email_key] = username
+                if username in usernames_db:
+                    status = STATUS_EXISTING
+                    motif = "compte existant : mise à jour possible"
+                else:
+                    status = STATUS_CREATE
+                    motif = "nouveau compte"
+
+        rows.append(
+            {
+                "ligne": int(line),
+                "nom": nom,
+                "prenom": prenom,
+                "email": email or None,
+                "username": username,
+                "statut": status,
+                "motif": motif,
+                "action": ALLOWED_ACTIONS[status][0],
+            }
+        )
+
+    return rows
 
 
-def build_status_table(valid: list, rejected: list) -> list:
+def resolve_action(status: str, chosen) -> str:
     """
-    Construit le tableau de contrôle : une entrée par ligne du fichier,
-    avec "OK" ou le motif du rejet, triée par numéro de ligne.
+    Retourne l'action à appliquer à une ligne : celle choisie par l'admin
+    si elle est autorisée pour ce statut, sinon l'action par défaut
+    (par exemple, un doublon ne peut qu'être ignoré).
     """
-    # Lignes valides : statut "OK"
-    table = [
-        {"ligne": r["ligne"], "username": r["username"], "statut": "OK"}
-        for r in valid
-    ]
-    # Lignes rejetées : le statut est le motif
-    table += [
-        {"ligne": r["ligne"], "username": r["username"], "statut": r["motif"]}
-        for r in rejected
-    ]
-    return sorted(table, key=lambda r: r["ligne"])
+    allowed = ALLOWED_ACTIONS[status]
+    return chosen if chosen in allowed else allowed[0]
+
+
+def apply_actions(rows: list, chosen_actions: dict) -> tuple:
+    """
+    Applique les actions choisies par l'admin.
+
+    chosen_actions : dict {numéro de ligne: action}. Voir resolve_action
+    pour les actions absentes ou non autorisées. Les lignes entièrement
+    vides sont écartées.
+
+    Retourne (to_create, to_update, ignored, to_fix) : quatre listes de lignes.
+    """
+    to_create, to_update, ignored, to_fix = [], [], [], []
+
+    for row in rows:
+        if row["statut"] == STATUS_EMPTY:
+            continue
+
+        action = resolve_action(row["statut"], chosen_actions.get(row["ligne"]))
+
+        if action == ACTION_CREATE:
+            to_create.append(row)
+        elif action == ACTION_UPDATE:
+            to_update.append(row)
+        elif action == ACTION_IGNORE:
+            ignored.append(row)
+        else:
+            to_fix.append(row)
+
+    return to_create, to_update, ignored, to_fix
 
 
 def build_template_csv() -> bytes:
@@ -223,10 +301,6 @@ def build_template_csv() -> bytes:
                 "prenom": "Marie",
                 "email": "marie.dupont@exemple.fr",
                 "username": "mdupont",
-                "role": "user",
-                "datasets_access": "dataset_a,dataset_b",
-                # Vide dans l'exemple : le compte sera créé en attente
-                "password": "",
             }
         ],
         columns=CSV_COLUMNS,

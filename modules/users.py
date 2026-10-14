@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import bcrypt
-from pymongo.errors import PyMongoError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 
 def ensure_username_index(users) -> bool:
@@ -44,6 +44,15 @@ def is_password_pending(user: dict) -> bool:
     créé par import CSV sans mot de passe). Il ne peut pas se connecter.
     """
     return not user.get("password_hash")
+
+def count_pending_users(users) -> int:
+    """
+    Compte les comptes "en attente" : rôle user et pas encore de mot de passe.
+    Ce sont les comptes créés par import CSV.
+    En MongoDB, filtrer sur None inclut aussi les comptes où le champ
+    password_hash est absent.
+    """
+    return users.count_documents({"role": "user", "password_hash": None})
 
 
 def validate_new_password(password: str, password_confirm: str) -> Optional[str]:
@@ -194,23 +203,21 @@ def update_user(users, user_id, new_username: str, new_nom: str, new_prenom: str
 
 def create_users_from_rows(users, rows: list) -> tuple:
     """
-    Insère les lignes validées. Si une ligne a un mot de passe, il est
-    hashé. Sinon le compte est créé "en attente" (password_hash à None) et
-    l'admin définira le mot de passe ensuite.
-    Renvoie (created, failed) : created contient les comptes créés (avec
-    un booléen mot_de_passe_defini), failed les lignes que MongoDB a
-    refusées (doublon apparu entre temps). Aucun mot de passe en clair
-    n'est renvoyé.
-    """
-    from pymongo.errors import DuplicateKeyError
+    Insère les lignes à créer issues de l'import CSV.
 
+    Tous les comptes sont créés "en attente" (password_hash à None), avec
+    le rôle "user" et sans dataset : l'admin complète ensuite chaque compte
+    depuis la page Comptes utilisateurs.
+
+    Renvoie (created, failed) : created contient les comptes créés,
+    failed les lignes que MongoDB a refusées (identifiant devenu déjà
+    utilisé entre temps).
+    """
     created = []
     failed = []
     now = datetime.now(timezone.utc)
 
     for row in rows:
-        # Hash si un mot de passe est fourni, None sinon (compte en attente)
-        password_hash = hash_password(row["password"]) if row.get("password") else None
         try:
             users.insert_one(
                 {
@@ -218,9 +225,9 @@ def create_users_from_rows(users, rows: list) -> tuple:
                     "prenom": row["prenom"],
                     "email": row["email"],
                     "username": row["username"],
-                    "password_hash": password_hash,
-                    "role": row["role"],
-                    "datasets_access": row["datasets_access"],
+                    "password_hash": None,
+                    "role": "user",
+                    "datasets_access": [],
                     "created_at": now,
                 }
             )
@@ -239,9 +246,49 @@ def create_users_from_rows(users, rows: list) -> tuple:
                 "nom": row["nom"],
                 "prenom": row["prenom"],
                 "username": row["username"],
-                "role": row["role"],
-                "mot_de_passe_defini": password_hash is not None,
             }
         )
 
     return created, failed
+
+
+def update_users_from_rows(users, rows: list) -> tuple:
+    """
+    Met à jour les comptes existants à partir des lignes de l'import CSV.
+
+    Le compte est retrouvé par son username. Seuls le nom, le prénom et
+    l'email (seulement s'il est renseigné) sont modifiés : jamais le rôle,
+    le mot de passe ni les datasets.
+
+    Renvoie (updated, failed) : updated contient les comptes mis à jour,
+    failed les lignes dont le compte n'existe plus (supprimé entre temps).
+    """
+    updated = []
+    failed = []
+
+    for row in rows:
+        # L'email n'est remplacé que s'il est renseigné dans le CSV
+        changes = {"nom": row["nom"], "prenom": row["prenom"]}
+        if row["email"]:
+            changes["email"] = row["email"]
+
+        result = users.update_one({"username": row["username"]}, {"$set": changes})
+        if result.matched_count == 0:
+            failed.append(
+                {
+                    "ligne": row["ligne"],
+                    "username": row["username"],
+                    "motif": "compte introuvable (supprimé entre temps)",
+                }
+            )
+            continue
+
+        updated.append(
+            {
+                "nom": row["nom"],
+                "prenom": row["prenom"],
+                "username": row["username"],
+            }
+        )
+
+    return updated, failed
