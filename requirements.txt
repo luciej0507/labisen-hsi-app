@@ -1,9 +1,14 @@
 streamlit
 python-dotenv
-spectral
-numpy
+spectral==0.24
+numpy==2.2.6
 Pillow
 tifffile
-pandas
+pandas==2.3.3
 pymongo
 bcrypt
+fastapi
+uvicorn
+psutil
+requests
+paramiko

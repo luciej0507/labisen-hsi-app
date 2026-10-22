@@ -1,0 +1,9 @@
+# Pile d'apprentissage (patching et entraînement), à installer sur le serveur GPU :
+#   pip install -r requirements.txt -r requirements-ml.txt
+# torch est compilé pour CUDA 12.8, compatible avec le pilote 535 du serveur.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.10.0
+torchvision==0.25.0
+anomalib==2.3.2
+lightning==2.6.1
+mlflow==3.14.0

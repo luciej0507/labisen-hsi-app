@@ -20,6 +20,7 @@ from modules.datasets import (
     get_datasets_autorises,
 )
 from modules.db_mongo import get_users_collection
+from modules.patches import lister_versions
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 
@@ -80,6 +81,38 @@ def stats_en_cache(chemin: str) -> dict:
     if stats["etat"] == "Serveur injoignable":
         raise ConnectionError("Serveur injoignable")
     return stats
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def patches_en_cache(chemin: str) -> list:
+    """
+    Enveloppe Streamlit autour de lister_versions : le résultat est gardé
+    5 minutes, pour ne pas interroger le serveur à chaque interaction.
+
+    Si le serveur est injoignable, lister_versions lève ConnectionError :
+    Streamlit ne met pas en cache une exception.
+    """
+    return lister_versions(chemin)
+
+
+def afficher_patches(chemin: str) -> None:
+    """
+    Affiche la ligne "Patches" d'une carte : "Non préparé" ou le nombre de
+    versions préparées, avec le nom de chaque version en texte gris.
+    """
+    try:
+        versions = patches_en_cache(chemin)
+    except ConnectionError:
+        st.caption("Patches : serveur injoignable.")
+        return
+
+    if not versions:
+        st.markdown("Patches : **Non préparé**")
+        return
+
+    # Nom des versions (ex : w1_h100_sl1_sc80), séparés par des virgules
+    noms = ", ".join(version["nom"] for version in versions)
+    st.markdown(f"Patches : **{len(versions)} version(s)**  \n:gray[{noms}]")
 
 
 def afficher_entete(nom: str, etat: str, cle: str) -> None:
@@ -151,6 +184,11 @@ def afficher_carte(chemin: str) -> None:
                 f"Split : **{etat_du_split}**  \n"
                 f":gray[{detail_split}]"
             )
+
+        # Seuls les datasets complets peuvent être préparés : on n'affiche
+        # la ligne "Patches" que pour eux (évite aussi des appels au serveur)
+        if etat == "Complet":
+            afficher_patches(chemin)
 
         # Bloc "À faire" sans fond, en liste à puces. .get() évite une
         # KeyError si le résultat en cache date d'avant l'ajout de cette clé.

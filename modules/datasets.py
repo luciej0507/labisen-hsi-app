@@ -24,7 +24,9 @@ dashboard d'administration à faible nombre d'utilisateurs simultanés.
 """
 
 import os
+import socket
 import stat
+import time
 
 import paramiko
 from dotenv import load_dotenv
@@ -45,11 +47,28 @@ DATASETS_REMOTE_PATH = "/mnt/lslteam/SIIRI/CodePythonSIIRI/"
 # Les trois splits attendus dans un dataset (voir la page Mode d'emploi)
 SPLITS = ["Train", "Test", "Val"]
 
+# TEMPORAIRE : accepte aussi les masques .png placés directement dans
+# Annotation/ (sans le sous-dossier PNG). À passer à False une fois tous
+# les datasets migrés vers la structure Annotation/PNG.
+ACCEPTER_ANNOTATION_A_PLAT = True
+
 
 
 # Connexion SFTP partagée par tout le module. Vide au démarrage : elle est
 # ouverte au premier appel qui en a besoin, puis réutilisée ensuite.
 _connexion = {"sftp": None, "transport": None}
+
+# Durée maximale d'attente (en secondes) pour joindre le serveur. Sans cette
+# limite, un serveur éteint fait attendre plusieurs dizaines de secondes.
+TIMEOUT_CONNEXION = 5
+
+# Après un échec de connexion, on ne réessaie pas pendant ce délai (en
+# secondes) : les appels suivants échouent immédiatement au lieu d'attendre
+# à nouveau le timeout.
+DELAI_NOUVELLE_TENTATIVE = 30
+
+# Heure (time.time()) du dernier échec de connexion, None si aucun échec
+_dernier_echec = {"heure": None}
 
 
 def _connexion_active() -> bool:
@@ -66,11 +85,31 @@ def _obtenir_sftp():
     (premier appel, ou connexion coupée depuis), une nouvelle connexion est
     ouverte et devient la connexion partagée pour les appels suivants.
 
+    Si la dernière tentative a échoué il y a moins de DELAI_NOUVELLE_TENTATIVE
+    secondes, aucune nouvelle tentative n'est faite : l'erreur est levée
+    tout de suite, pour ne pas attendre le timeout à chaque appel.
+
     Peut lever paramiko.SSHException ou OSError si la connexion échoue.
     """
     if not _connexion_active():
-        transport = paramiko.Transport((SFTP_HOST, SFTP_PORT))
-        transport.connect(username=SFTP_USERNAME, password=SFTP_PASSWORD)
+        # Échec récent : on abandonne immédiatement
+        heure = _dernier_echec["heure"]
+        if heure is not None and time.time() - heure < DELAI_NOUVELLE_TENTATIVE:
+            raise OSError("Serveur injoignable (échec récent)")
+
+        try:
+            # Le socket est ouvert avec un timeout court, puis confié à paramiko
+            sock = socket.create_connection(
+                (SFTP_HOST, SFTP_PORT), timeout=TIMEOUT_CONNEXION
+            )
+            transport = paramiko.Transport(sock)
+            transport.connect(username=SFTP_USERNAME, password=SFTP_PASSWORD)
+        except (paramiko.SSHException, OSError):
+            # On retient l'heure de l'échec avant de renvoyer l'erreur
+            _dernier_echec["heure"] = time.time()
+            raise
+
+        _dernier_echec["heure"] = None
         _connexion["transport"] = transport
         _connexion["sftp"] = paramiko.SFTPClient.from_transport(transport)
     return _connexion["sftp"]
@@ -232,19 +271,35 @@ def _stats_split(sftp, split_chemin):
     cubes = _bases(sftp, split_chemin, "HSI", ".bil")
     # Fichiers associés à chaque cube (même nom de base)
     hdr = _bases(sftp, split_chemin, "HSI", ".bil.hdr")
-    rgb_png = _bases(sftp, split_chemin, "RGB/PNG", ".png")
-    rgb_tiff = _bases(sftp, split_chemin, "RGB/TIFF", ".tiff")
+    # Les photos RGB (.png) sont directement dans le dossier RGB
+    rgb = _bases(sftp, split_chemin, "RGB", ".png")
     ann_png = _bases(sftp, split_chemin, "Annotation/PNG", ".png")
+    # Règle temporaire : on accepte aussi les masques directement dans Annotation/
+    if ACCEPTER_ANNOTATION_A_PLAT:
+        ann_png = ann_png | _bases(sftp, split_chemin, "Annotation", ".png")
+
  
     # Un cube est annoté si son masque png existe (même nom de base que le cube)
     annotes = cubes & ann_png
-    # Un cube a tous ses fichiers hors annotation s'il est dans les 4 ensembles
-    fichiers_ok = cubes & hdr & rgb_png & rgb_tiff
+    # Ancienne structure : le dossier RGB contient encore des sous-dossiers
+    # PNG ou TIFF au lieu des photos directement
+    chemin_rgb = _resoudre(sftp, split_chemin, "RGB")
+    noms_rgb = (_noms(sftp, chemin_rgb) or []) if chemin_rgb else []
+    ancienne_structure = any(nom.lower() in ("png", "tiff") for nom in noms_rgb)
+
+    # Un cube a tous ses fichiers hors annotation s'il est dans les 3 ensembles.
+    # Pour l'ancienne structure, on ignore les photos RGB : le problème est
+    # signalé à part, pour ne pas afficher de faux "fichiers manquants".
+    if ancienne_structure:
+        fichiers_ok = cubes & hdr
+    else:
+        fichiers_ok = cubes & hdr & rgb
  
     return {
         "cubes": len(cubes),
         "annotes": len(annotes),
         "incomplets": len(cubes - fichiers_ok),
+        "ancienne_structure": ancienne_structure,
     }
  
  
@@ -254,12 +309,15 @@ def _resultat(etat, splits=None):
     total = sum(s["cubes"] for s in splits.values())
     annotes = sum(s["annotes"] for s in splits.values())
     incomplets = sum(s["incomplets"] for s in splits.values())
+    # Vrai si au moins un split utilise encore l'ancienne structure RGB
+    ancienne_structure = any(s["ancienne_structure"] for s in splits.values())
     return {
         "etat": etat,
         "cubes_par_split": {nom: s["cubes"] for nom, s in splits.items()},
         "total_cubes": total,
         "annotes": annotes,
         "incomplets": incomplets,
+        "ancienne_structure": ancienne_structure,
         "taches": [],
     }
  
@@ -352,6 +410,10 @@ def calculer_stats(chemin_dataset: str) -> dict:
     message_split = tache_split(resultat["cubes_par_split"])
     if message_split:
         taches.append(message_split)
+    if resultat["ancienne_structure"]:
+        taches.append(
+            "Ancienne structure RGB à migrer (retirer les dossiers PNG et TIFF)"
+        )
     if resultat["incomplets"] > 0:
         taches.append(
             f"{resultat['incomplets']} cube(s) avec des fichiers manquants"
@@ -365,3 +427,90 @@ def calculer_stats(chemin_dataset: str) -> dict:
     resultat["etat"] = "À compléter" if taches else "Complet"
  
     return resultat
+
+
+def _chemin_split(sftp, chemin_dataset: str, split: str):
+    """
+    Renvoie le vrai chemin du dossier d'un split (Train, Test ou Val),
+    sans tenir compte de la casse, ou None s'il n'existe pas.
+    """
+    racine = _noms(sftp, chemin_dataset)
+    if racine is None:
+        return None
+    reel = _trouver(racine, split)
+    if reel is None:
+        return None
+    return f"{chemin_dataset.rstrip('/')}/{reel}"
+ 
+ 
+def lister_cubes(chemin_dataset: str, split: str) -> list:
+    """
+    Liste les cubes HSI d'un split (un cube = un fichier .bil dans HSI/).
+ 
+    Renvoie les noms de base (sans l'extension), triés par ordre alphabétique.
+    Renvoie une liste vide si le serveur est injoignable ou si le split
+    n'existe pas : c'est à l'interface d'afficher un message dans ce cas.
+    """
+    try:
+        sftp = _obtenir_sftp()
+    except (paramiko.SSHException, OSError):
+        return []
+ 
+    chemin_split = _chemin_split(sftp, chemin_dataset, split)
+    if chemin_split is None:
+        return []
+ 
+    return sorted(_bases(sftp, chemin_split, "HSI", ".bil"))
+ 
+ 
+def lire_dimensions(chemin_dataset: str, split: str, nom_cube: str) -> dict:
+    """
+    Lit les dimensions d'un cube dans son fichier d'en-tête (.bil.hdr).
+ 
+    Renvoie {"lignes": int, "colonnes": int, "bandes": int}, ou None si
+    le fichier est introuvable ou illisible.
+    """
+    try:
+        sftp = _obtenir_sftp()
+    except (paramiko.SSHException, OSError):
+        return None
+ 
+    chemin_split = _chemin_split(sftp, chemin_dataset, split)
+    if chemin_split is None:
+        return None
+    chemin_hsi = _resoudre(sftp, chemin_split, "HSI")
+    if chemin_hsi is None:
+        return None
+ 
+    # Fichier d'en-tête du cube, recherché sans tenir compte de la casse
+    voulu = f"{nom_cube}.bil.hdr".lower()
+    nom_hdr = None
+    for nom in _noms(sftp, chemin_hsi) or []:
+        if nom.lower() == voulu:
+            nom_hdr = nom
+            break
+    if nom_hdr is None:
+        return None
+ 
+    # Lecture du texte de l'en-tête
+    try:
+        with sftp.open(f"{chemin_hsi.rstrip('/')}/{nom_hdr}", "r") as fichier:
+            texte = fichier.read().decode("utf-8", errors="ignore")
+    except IOError:
+        return None
+ 
+    # Les lignes de l'en-tête ont la forme "cle = valeur"
+    valeurs = {}
+    for ligne in texte.splitlines():
+        if "=" in ligne:
+            cle, valeur = ligne.split("=", 1)
+            valeurs[cle.strip().lower()] = valeur.strip()
+ 
+    try:
+        return {
+            "lignes": int(valeurs["lines"]),
+            "colonnes": int(valeurs["samples"]),
+            "bandes": int(valeurs["bands"]),
+        }
+    except (KeyError, ValueError):
+        return None
