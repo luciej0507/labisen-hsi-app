@@ -18,6 +18,9 @@ from modules.datasets import (
     chemin_relatif,
     etat_split,
     get_datasets_autorises,
+    ajouter_dataset,
+    dossier_utilisateur,
+
 )
 from modules.db_mongo import get_users_collection
 from modules.patches import lister_versions
@@ -198,18 +201,29 @@ def afficher_carte(chemin: str) -> None:
             st.markdown("**À faire**\n\n" + liste)
 
 
-def afficher_projet(parent: str, datasets: list) -> None:
-    """Affiche un projet : son titre, son chemin, puis ses cartes par rangées."""
-    est_racine = parent.rstrip("/") == DATASETS_REMOTE_PATH.rstrip("/")
 
-    # Titre : nom du dossier parent (ou un libellé pour la racine du serveur)
-    if est_racine:
-        st.subheader("Racine du serveur")
+def afficher_projet(parent: str, datasets: list, username: str) -> None:
+    """
+    Affiche un groupe de datasets : son titre, puis ses cartes par rangées.
+ 
+    Trois cas pour le titre :
+      - dossier personnel de l'utilisateur : "Mes bases importées"
+      - racine du serveur (datasets attribués par l'admin) : "Bases attribuées"
+      - tout autre dossier : son nom, avec son chemin en dessous
+    """
+    racine = DATASETS_REMOTE_PATH.rstrip("/")
+    parent = parent.rstrip("/")
+ 
+    if parent == racine:
+        st.subheader("Bases attribuées")
+    elif parent == dossier_utilisateur(username):
+        # Le nom du dossier serait le nom de l'utilisateur : on ne l'affiche pas
+        st.subheader("Mes bases importées")
     else:
-        st.subheader(os.path.basename(parent.rstrip("/")))
+        st.markdown("#### " + os.path.basename(parent))
         # Chemin complet du projet (relatif à la racine) pour lever toute ambiguïté
         st.caption(chemin_relatif(DATASETS_REMOTE_PATH, parent))
-
+ 
     # Une rangée de 3 colonnes à la fois : on passe à la suivante quand elle est pleine
     for debut in range(0, len(datasets), CARTES_PAR_RANGEE):
         colonnes = st.columns(CARTES_PAR_RANGEE)
@@ -221,6 +235,61 @@ def afficher_projet(parent: str, datasets: list) -> None:
                 afficher_carte(chemin)
 
 
+
+
+def afficher_formulaire_ajout(users, username: str) -> None:
+    """
+    Affiche le formulaire d'ajout d'une base de données (archive zip).
+ 
+    L'envoi et l'attribution des droits sont gérés par ajouter_dataset
+    (modules/datasets.py) : cette fonction ne s'occupe que de l'affichage.
+    """
+    # Message du dernier ajout réussi : la page est relancée après l'ajout,
+    # on le garde donc en session pour l'afficher une fois
+    message = st.session_state.pop("message_ajout", None)
+    if message:
+        st.success(message)
+ 
+    with st.expander("Ajouter une base de données"):
+        st.caption(
+            "L'archive zip doit contenir les dossiers Train, Test et Val. "
+            "Consultez la page Mode d'emploi pour connaître la structure attendue."
+        )
+ 
+        # Un formulaire : rien n'est envoyé tant que le bouton n'est pas cliqué
+        with st.form("formulaire_ajout_bdd"):
+            nom = st.text_input(
+                "Nom du dataset",
+                help="Lettres, chiffres, tirets et underscores uniquement.",
+            )
+            fichier = st.file_uploader("Archive zip", type=["zip"])
+            valide = st.form_submit_button("Envoyer sur le serveur")
+ 
+        if not valide:
+            return
+ 
+        nom = nom.strip()
+        if not nom or fichier is None:
+            st.error("Renseignez un nom et choisissez une archive zip.")
+            return
+ 
+        # L'envoi peut être long pour de gros datasets
+        with st.spinner("Envoi en cours, cela peut prendre du temps..."):
+            succes, message = ajouter_dataset(users, fichier, username, nom)
+ 
+        if not succes:
+            st.error(message)
+            return
+ 
+        # Succès : on vide le cache des statistiques et on relance la page
+        # pour afficher la nouvelle carte
+        stats_en_cache.clear()
+        st.session_state["message_ajout"] = message
+        st.rerun()
+
+
+
+
 # Injection du style des cartes (une seule fois par chargement de page)
 st.markdown(STYLE_CARTES, unsafe_allow_html=True)
 
@@ -228,9 +297,13 @@ st.title("Gestion des bases de données")
 
 # Nom d'utilisateur de la personne connectée (même clé que dans la page admin)
 username = st.session_state.get("username")
-
-# Lecture des droits en base à chaque chargement de la page
 users = get_users_collection()
+ 
+# Le formulaire est affiché AVANT le st.stop() ci-dessous : un utilisateur
+# sans aucun dataset doit pouvoir en ajouter un
+afficher_formulaire_ajout(users, username)
+ 
+# Lecture des droits en base à chaque chargement de la page
 chemins = get_datasets_autorises(users, username)
 
 if not chemins:
@@ -248,7 +321,12 @@ for chemin in sorted(chemins):
     parent = os.path.dirname(chemin.rstrip("/"))
     projets.setdefault(parent, []).append(chemin)
 
+
+# Dossier personnel de l'utilisateur, affiché en premier
+dossier_perso = dossier_utilisateur(username)
+ 
 with st.spinner("Calcul des statistiques en cours..."):
-    # Projets par ordre alphabétique de chemin
-    for parent in sorted(projets):
-        afficher_projet(parent, projets[parent])
+    # Ordre : dossier personnel d'abord, puis les autres par ordre alphabétique
+    # (la clé de tri place False, donc le dossier perso, avant True)
+    for parent in sorted(projets, key=lambda p: (p != dossier_perso, p)):
+        afficher_projet(parent, projets[parent], username)
