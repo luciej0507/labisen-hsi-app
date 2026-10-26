@@ -17,7 +17,7 @@ from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.datasets.stats import calculer_stats, etat_split
 from modules.datasets.upload import ajouter_dataset, dossier_utilisateur
 from modules.db_mongo import get_users_collection
-from modules.patches import lister_versions
+from modules.versions_patching import lister_versions
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 

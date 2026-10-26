@@ -27,7 +27,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from modules.patches import chemin_patching
+from modules.versions_patching import chemin_patching
 
 load_dotenv()
 

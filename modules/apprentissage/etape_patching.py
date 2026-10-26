@@ -5,13 +5,13 @@ modules/apprentissage/etape_patching.py
 une version de patches déjà préparée, ou d'en créer une nouvelle.
 
 Les accès au serveur et les calculs sur les patches sont dans
-modules/patches.py : ce fichier ne fait que préparer ce que la page affiche.
+modules/versions_patching.py : ce fichier ne fait que préparer ce que la page affiche.
 """
 
 import time
 
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
-from modules.patches import estimer_nb_patches, lister_versions, splits_non_patches
+from modules.versions_patching import estimer_nb_patches, lister_versions, splits_non_patches
 
 from modules.apprentissage.formats import formater_date
 
