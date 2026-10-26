@@ -43,7 +43,7 @@ from modules.apprentissage.frise import (
     etapes_validees,
     libelle_etape,
 )
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif
 from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection

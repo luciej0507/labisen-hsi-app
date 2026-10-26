@@ -13,12 +13,12 @@ import pandas as pd
 import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif
 from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection
-from modules.user_import import ROLES
-from modules.users import (
+from modules.comptes.user_import import ROLES
+from modules.comptes.users import (
     delete_blocked_reason,
     delete_user,
     format_date,

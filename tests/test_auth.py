@@ -11,7 +11,7 @@ import bcrypt
 import pytest
 import streamlit as st
 
-from modules import auth
+from modules.comptes import auth
 
 
 @pytest.fixture

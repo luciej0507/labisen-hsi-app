@@ -13,7 +13,7 @@ import pytest
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from modules.users import (
+from modules.comptes.users import (
     create_user,
     delete_blocked_reason,
     delete_user,

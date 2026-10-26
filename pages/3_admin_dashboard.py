@@ -8,9 +8,9 @@ sont dans les pages 3a (ajout), 3b (comptes) et 3c (reporting).
 
 import streamlit as st
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from modules.db_mongo import get_users_collection
-from modules.users import count_pending_users
+from modules.comptes.users import count_pending_users
 from ui.sidebar import SECTIONS_ADMIN, render_sidebar
 from ui.topnav import configurer_page, render_topnav
 

@@ -8,7 +8,7 @@ Partagé par les pages d'administration qui touchent aux comptes
 import streamlit as st
 
 from modules.db_mongo import get_users_collection
-from modules.users import ensure_username_index
+from modules.comptes.users import ensure_username_index
 
 
 @st.cache_resource

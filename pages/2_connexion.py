@@ -7,7 +7,7 @@ pour vérifier les identifiants et gérer la session.
 
 import streamlit as st
 
-from modules.auth import authenticate_with_role, login_user
+from modules.comptes.auth import authenticate_with_role, login_user
 from ui.topnav import configurer_page, render_topnav
 
 configurer_page("Connexion")

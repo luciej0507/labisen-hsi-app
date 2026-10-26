@@ -21,7 +21,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from modules.auth import get_current_role, is_logged_in, logout_user
+from modules.comptes.auth import get_current_role, is_logged_in, logout_user
 
 # Informations affichées dans l'en-tête et dans le pied de page.
 NOM_APPLI = "SpectraVision"

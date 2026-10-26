@@ -11,7 +11,7 @@ import os
 
 import streamlit as st
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif, get_datasets_autorises
 from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.datasets.stats import calculer_stats, etat_split

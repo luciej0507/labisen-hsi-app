@@ -4,7 +4,7 @@ Page Acquisition : section de l'espace de travail (rôle user).
 
 import streamlit as st
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 

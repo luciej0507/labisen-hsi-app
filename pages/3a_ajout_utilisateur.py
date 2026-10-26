@@ -13,10 +13,10 @@ import pandas as pd
 import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection
-from modules.user_import import (
+from modules.comptes.user_import import (
     ACTION_CREATE,
     ACTION_FIX,
     ACTION_IGNORE,
@@ -34,7 +34,7 @@ from modules.user_import import (
     parse_csv,
     resolve_action,
 )
-from modules.users import (
+from modules.comptes.users import (
     create_user,
     create_users_from_rows,
     update_users_from_rows,
