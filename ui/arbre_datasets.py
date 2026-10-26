@@ -13,7 +13,7 @@ sélection indépendante de celle des autres formulaires.
 
 import streamlit as st
 
-from modules.datasets import (
+from modules.datasets.exploration_dataset import (
     chemin_relatif,
     list_folder_contents,
     mettre_a_jour_selection,

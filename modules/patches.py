@@ -17,8 +17,8 @@ patché pour un format quand le CSV à 100 % existe, par exemple :
 C'est le dernier fichier écrit par le patching : 
 s'il est là, le split est complet.
 
-Comme datasets.py, ce module n'importe jamais Streamlit et réutilise la
-connexion SFTP partagée de datasets.py.
+Comme le package modules/datasets, ce module n'importe jamais Streamlit et réutilise la
+connexion SFTP partagée de modules/datasets/sftp.py.
 """
 
 import re
@@ -26,7 +26,8 @@ from datetime import datetime
 
 import paramiko
 
-from modules.datasets import SPLITS, _noms, _obtenir_sftp
+from modules.datasets.sftp import lister_noms, obtenir_sftp
+from modules.datasets.stats import SPLITS
 
 # Dossier des patches, à l'intérieur du dataset (même nom que dans data_utils.py)
 NOM_DOSSIER_PATCHING = "hsi-data-patching"
@@ -86,7 +87,7 @@ def lister_versions(chemin_dataset: str) -> list:
     l'interface d'afficher un message dans ce cas.
     """
     try:
-        sftp = _obtenir_sftp()
+        sftp = obtenir_sftp()
     except (paramiko.SSHException, OSError):
         raise ConnectionError("Serveur injoignable")
 
@@ -96,7 +97,7 @@ def lister_versions(chemin_dataset: str) -> list:
     formats = {}
     for split in SPLITS:
         dossier_split = f"{racine}/HSI/csv_for_dataloader/{split.lower()}"
-        for nom_format in _noms(sftp, dossier_split) or []:
+        for nom_format in lister_noms(sftp, dossier_split) or []:
             if not MOTIF_FORMAT.match(nom_format):
                 continue
             date = date_modification(sftp, chemin_marqueur(chemin_dataset, split, nom_format))

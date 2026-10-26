@@ -12,16 +12,10 @@ import os
 import streamlit as st
 
 from modules.auth import require_role
-from modules.datasets import (
-    DATASETS_REMOTE_PATH,
-    calculer_stats,
-    chemin_relatif,
-    etat_split,
-    get_datasets_autorises,
-    ajouter_dataset,
-    dossier_utilisateur,
-
-)
+from modules.datasets.exploration_dataset import chemin_relatif, get_datasets_autorises
+from modules.datasets.sftp import DATASETS_REMOTE_PATH
+from modules.datasets.stats import calculer_stats, etat_split
+from modules.datasets.upload import ajouter_dataset, dossier_utilisateur
 from modules.db_mongo import get_users_collection
 from modules.patches import lister_versions
 from ui.sidebar import render_sidebar
@@ -166,7 +160,7 @@ def afficher_carte(chemin: str) -> None:
             )
             return
 
-        # État du split (Fait, Incomplet ou Non fait), règle définie dans datasets.py
+        # État du split (Fait, Incomplet ou Non fait), règle définie dans modules/datasets/stats.py
         cubes_par_split = stats["cubes_par_split"]
         etat_du_split = etat_split(cubes_par_split)
 
@@ -242,7 +236,7 @@ def afficher_formulaire_ajout(users, username: str) -> None:
     Affiche le formulaire d'ajout d'une base de données (archive zip).
  
     L'envoi et l'attribution des droits sont gérés par ajouter_dataset
-    (modules/datasets.py) : cette fonction ne s'occupe que de l'affichage.
+    (modules/datasets/upload.py) : cette fonction ne s'occupe que de l'affichage.
     """
     # Message du dernier ajout réussi : la page est relancée après l'ajout,
     # on le garde donc en session pour l'afficher une fois

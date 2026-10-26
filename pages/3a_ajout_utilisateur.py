@@ -14,7 +14,7 @@ import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
 from modules.auth import require_role
-from modules.datasets import DATASETS_REMOTE_PATH
+from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection
 from modules.user_import import (
     ACTION_CREATE,

@@ -1,36 +1,19 @@
 """
-modules/apprentissage.py
+modules/apprentissage/etape_patching.py
 
-Logique de la page Apprentissage : étapes du parcours, règles de
-verrouillage de la frise, lecture des datasets utilisables et préparation
-des patches.
+Étape 2 de la page Apprentissage : patching. Cette étape permet de choisir
+une version de patches déjà préparée, ou d'en créer une nouvelle.
 
-Le parcours est obligatoire : un dataset à l'état Complet, puis le
-patching, puis le choix de l'entraînement, puis le récapitulatif.
-
-Ce module n'importe jamais Streamlit, comme datasets.py et patches.py :
-la page ne fait que l'affichage et appelle ces fonctions.
+Les accès au serveur et les calculs sur les patches sont dans
+modules/patches.py : ce fichier ne fait que préparer ce que la page affiche.
 """
 
 import time
-from datetime import datetime
 
-from modules.datasets import (
-    SPLITS,
-    calculer_stats,
-    get_datasets_autorises,
-    lire_dimensions,
-    lister_cubes,
-)
+from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
 from modules.patches import estimer_nb_patches, lister_versions, splits_non_patches
 
-# Étapes du parcours, dans l'ordre d'affichage de la frise
-ETAPES = [
-    {"cle": "dataset", "titre": "Dataset"},
-    {"cle": "patching", "titre": "Patching"},
-    {"cle": "entrainement", "titre": "Entraînement"},
-    {"cle": "recapitulatif", "titre": "Récapitulatif"},
-]
+from modules.apprentissage.formats import formater_date
 
 # Choix de split source pour le patching : un split, ou tous ceux à patcher
 TOUS_LES_SPLITS = "Tous les splits"
@@ -47,101 +30,7 @@ CHOIX_STRIDE_COLS = [50, 80, 100, 200]
 
 
 # ---------------------------------------------------------------------------
-# Règles de la frise
-# ---------------------------------------------------------------------------
-
-
-def etapes_validees(dataset, version) -> list:
-    """
-    Renvoie une liste de booléens (un par étape) indiquant celles qui
-    sont validées.
-
-    - Dataset : validée dès qu'un dataset a été choisi.
-    - Patching : validée dès qu'une version de patches a été choisie.
-    - Les deux dernières étapes suivront avec leur contenu.
-    """
-    return [dataset is not None, version is not None, False, False]
-
-
-def etape_accessible(index: int, validees: list) -> bool:
-    """
-    Indique si l'étape `index` est accessible.
-
-    La première étape l'est toujours. Les suivantes ne le sont que si
-    toutes les étapes précédentes sont validées.
-    """
-    return all(validees[:index])
-
-
-def libelle_etape(index: int, validee: bool) -> str:
-    """Renvoie le texte du bouton d'une étape, par exemple "1. Dataset"."""
-    texte = f"{index + 1}. {ETAPES[index]['titre']}"
-    if validee:
-        texte += " (validé)"
-    return texte
-
-
-# ---------------------------------------------------------------------------
-# Mises en forme
-# ---------------------------------------------------------------------------
-
-
-def formater_nombre(nombre: int) -> str:
-    """Affiche un entier avec un espace comme séparateur de milliers."""
-    return f"{nombre:,}".replace(",", " ")
-
-
-def formater_splits(nombres_par_split: dict) -> str:
-    """
-    Met en forme un nombre par split.
-
-    Exemple : {"Train": 1200, "Test": 300} devient "Train 1 200, Test 300".
-    """
-    return ", ".join(
-        f"{nom} {formater_nombre(nombre)}" for nom, nombre in nombres_par_split.items()
-    )
-
-
-def formater_date(date_iso) -> str:
-    """Transforme une date ISO (2026-10-16T11:30:00) en 16/10/2026 11:30."""
-    try:
-        return datetime.fromisoformat(date_iso).strftime("%d/%m/%Y %H:%M")
-    except (TypeError, ValueError):
-        return "inconnue"
-
-
-# ---------------------------------------------------------------------------
-# Étape 1 : choix du dataset
-# ---------------------------------------------------------------------------
-
-
-def lister_datasets_complets(users, username: str) -> list:
-    """
-    Renvoie les chemins des datasets autorisés pour l'utilisateur dont
-    l'état est Complet (voir la page Gestion des BDD).
-
-    Renvoie une liste vide si l'utilisateur n'a aucun accès ou si aucun
-    dataset n'est complet.
-    """
-    chemins = get_datasets_autorises(users, username)
-    return [c for c in chemins if calculer_stats(c)["etat"] == "Complet"]
-
-
-def resume_dataset(chemin_dataset: str) -> dict:
-    """
-    Renvoie un petit résumé d'un dataset : nombre total de cubes, nombre
-    de cubes annotés et nombre de cubes par split.
-    """
-    stats = calculer_stats(chemin_dataset)
-    return {
-        "total_cubes": stats["total_cubes"],
-        "annotes": stats["annotes"],
-        "cubes_par_split": stats["cubes_par_split"],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Étape 2 : versions déjà préparées
+# Versions déjà préparées
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +86,7 @@ def version_utilisable(version: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Étape 2 : nouvelle version
+# Nouvelle version
 # ---------------------------------------------------------------------------
 
 
@@ -266,7 +155,7 @@ def splits_a_patcher(choix: str, restants: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Étape 2 : dimensions des cubes, aperçu et lancement
+# Dimensions des cubes, aperçu et lancement
 # ---------------------------------------------------------------------------
 
 

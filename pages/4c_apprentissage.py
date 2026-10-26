@@ -10,38 +10,42 @@ modules/apprentissage.py.
 import pandas as pd
 import streamlit as st
 
-from modules.apprentissage import (
+from modules.apprentissage.etape_dataset import (
+    lister_datasets_complets,
+    resume_dataset,
+)
+from modules.apprentissage.etape_patching import (
     CHOIX_N_LINES,
     CHOIX_PATCH_SIZE,
     CHOIX_STRIDE_COLS,
     CHOIX_STRIDE_LINES,
-    ETAPES,
     apercu_patching,
     construire_parametres,
     cubes_a_patcher,
-    etape_accessible,
-    etapes_validees,
-    formater_nombre,
-    formater_splits,
     lancer_patching_cube,
     largeur_commune,
-    libelle_etape,
     libelles_versions,
     lignes_versions,
     lire_dimensions_dataset,
     lire_versions,
-    lister_datasets_complets,
     nom_dossier_format,
     options_split_source,
-    resume_dataset,
     splits_a_patcher,
     splits_deja_patches,
     splits_restants,
     trouver_version,
     version_utilisable,
 )
+from modules.apprentissage.formats import formater_nombre, formater_splits
+from modules.apprentissage.frise import (
+    ETAPES,
+    etape_accessible,
+    etapes_validees,
+    libelle_etape,
+)
 from modules.auth import require_role
-from modules.datasets import DATASETS_REMOTE_PATH, chemin_relatif
+from modules.datasets.exploration_dataset import chemin_relatif
+from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
