@@ -1,5 +1,5 @@
 """
-tests/test_users.py : tests de modules/users.py.
+tests/comptes/test_users.py : tests de modules/comptes/users.py.
 
 Les messages d'erreur sont vérifiés avec un mot-clé (assert "mot" in message)
 plutôt qu'avec le texte exact : les tests ne cassent pas si on corrige
@@ -14,13 +14,19 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from modules.comptes.users import (
+    count_pending_users,
     create_user,
+    create_users_from_rows,
     delete_blocked_reason,
     delete_user,
     ensure_username_index,
     format_date,
     hash_password,
+    is_password_pending,
+    reset_password,
     update_user,
+    update_users_from_rows,
+    validate_new_password,
     validate_new_user,
     validate_user_update,
 )
@@ -387,3 +393,242 @@ def test_update_user_doublon_leve_une_erreur(users, creer_compte):
 
     with pytest.raises(DuplicateKeyError):
         update_user(users, compte["_id"], "bob", "Nom", "Prénom", "", "user", [])
+
+
+# ---------------------------------------------------------------------------
+# is_password_pending
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "compte, attendu",
+    [
+        ({"password_hash": None}, True),
+        ({}, True),
+        ({"password_hash": ""}, True),
+        ({"password_hash": "un_hash"}, False),
+    ],
+)
+def test_is_password_pending(compte, attendu):
+    """Un compte est en attente tant qu'il n'a pas de mot de passe."""
+    assert is_password_pending(compte) is attendu
+
+
+# ---------------------------------------------------------------------------
+# count_pending_users
+# ---------------------------------------------------------------------------
+
+def test_count_pending_users_base_vide(users):
+    """Sans compte, il n'y a aucun compte en attente."""
+    assert count_pending_users(users) == 0
+
+
+def test_count_pending_users(users, creer_compte):
+    """Seuls les comptes "user" sans mot de passe sont comptés."""
+    creer_compte("a", password_hash=None)
+    creer_compte("b", password_hash="un_hash")
+    # Un admin sans mot de passe n'est pas compté
+    creer_compte("c", role="admin", password_hash=None)
+    # Champ password_hash absent : le compte est aussi en attente
+    users.insert_one({"username": "d", "role": "user"})
+
+    assert count_pending_users(users) == 2
+
+
+# ---------------------------------------------------------------------------
+# validate_new_password
+# ---------------------------------------------------------------------------
+
+def test_validate_new_password_valide():
+    """Deux saisies identiques et non vides ne renvoient aucune erreur."""
+    assert validate_new_password("secret123", "secret123") is None
+
+
+def test_validate_new_password_espaces_acceptes():
+    """Le mot de passe n'est pas nettoyé : des espaces y sont valides."""
+    assert validate_new_password("   ", "   ") is None
+
+
+def test_validate_new_password_vide():
+    """Un mot de passe vide est refusé."""
+    message = validate_new_password("", "")
+
+    assert message is not None
+    assert "vide" in message
+
+
+def test_validate_new_password_differents():
+    """Deux saisies différentes sont refusées."""
+    message = validate_new_password("secret123", "autre")
+
+    assert message is not None
+    assert "correspondent" in message
+
+
+# ---------------------------------------------------------------------------
+# reset_password
+# ---------------------------------------------------------------------------
+
+def test_reset_password_definit_le_mot_de_passe(users, creer_compte):
+    """Un compte en attente reçoit un mot de passe haché et vérifiable."""
+    compte = creer_compte("alice", password_hash=None)
+
+    resultat = reset_password(users, compte["_id"], "nouveau123")
+
+    en_base = users.find_one({"_id": compte["_id"]})
+    assert resultat is True
+    assert en_base["password_hash"] != "nouveau123"
+    assert bcrypt.checkpw(b"nouveau123", en_base["password_hash"].encode("utf-8"))
+    assert is_password_pending(en_base) is False
+
+
+def test_reset_password_ne_touche_pas_les_autres_comptes(users, creer_compte):
+    """Seul le compte visé change de mot de passe."""
+    alice = creer_compte("alice")
+    creer_compte("bob")
+
+    reset_password(users, alice["_id"], "nouveau123")
+
+    assert users.find_one({"username": "bob"})["password_hash"] == "hash_bidon"
+
+
+def test_reset_password_compte_supprime_entre_temps(users):
+    """Si le compte n'existe plus, la fonction renvoie False."""
+    assert reset_password(users, ObjectId(), "nouveau123") is False
+
+
+# ---------------------------------------------------------------------------
+# create_users_from_rows
+# ---------------------------------------------------------------------------
+
+def ligne_import(numero, username, **surcharges) -> dict:
+    """Ligne issue de l'import CSV, modifiable au cas par cas."""
+    ligne = {
+        "ligne": numero,
+        "nom": "Dupont",
+        "prenom": "Marie",
+        "email": None,
+        "username": username,
+    }
+    ligne.update(surcharges)
+    return ligne
+
+
+def test_create_users_from_rows_cree_des_comptes_en_attente(users):
+    """Les comptes importés n'ont ni mot de passe, ni dataset, et le rôle user."""
+    lignes = [
+        ligne_import(1, "mdupont", email="marie@exemple.fr"),
+        ligne_import(2, "jmartin", nom="Martin", prenom="Jean"),
+    ]
+
+    crees, echecs = create_users_from_rows(users, lignes)
+
+    assert echecs == []
+    assert crees == [
+        {"nom": "Dupont", "prenom": "Marie", "username": "mdupont"},
+        {"nom": "Martin", "prenom": "Jean", "username": "jmartin"},
+    ]
+    en_base = users.find_one({"username": "mdupont"})
+    assert en_base["email"] == "marie@exemple.fr"
+    assert en_base["role"] == "user"
+    assert en_base["datasets_access"] == []
+    assert en_base["password_hash"] is None
+    assert isinstance(en_base["created_at"], datetime)
+    assert is_password_pending(en_base) is True
+
+
+def test_create_users_from_rows_liste_vide(users):
+    """Sans ligne, rien n'est créé et rien n'échoue."""
+    assert create_users_from_rows(users, []) == ([], [])
+    assert users.count_documents({}) == 0
+
+
+def test_create_users_from_rows_doublon_en_base(users, creer_compte):
+    """Un username déjà pris est signalé, sans bloquer les autres lignes."""
+    creer_compte("mdupont")
+    lignes = [ligne_import(1, "mdupont"), ligne_import(2, "jmartin")]
+
+    crees, echecs = create_users_from_rows(users, lignes)
+
+    assert [c["username"] for c in crees] == ["jmartin"]
+    assert len(echecs) == 1
+    assert echecs[0]["ligne"] == 1
+    assert echecs[0]["username"] == "mdupont"
+    assert "déjà utilisé" in echecs[0]["motif"]
+    # Le compte existant n'a pas été modifié
+    assert users.find_one({"username": "mdupont"})["nom"] == "Nom"
+
+
+def test_create_users_from_rows_doublon_dans_la_liste(users):
+    """Deux lignes avec le même username : la première est créée, la seconde échoue."""
+    lignes = [ligne_import(1, "mdupont"), ligne_import(2, "mdupont")]
+
+    crees, echecs = create_users_from_rows(users, lignes)
+
+    assert len(crees) == 1
+    assert [e["ligne"] for e in echecs] == [2]
+
+
+# ---------------------------------------------------------------------------
+# update_users_from_rows
+# ---------------------------------------------------------------------------
+
+def test_update_users_from_rows_modifie_nom_prenom_email(users, creer_compte):
+    """Nom, prénom et email sont mis à jour, mais jamais le rôle, le mot de passe ni les datasets."""
+    creer_compte("alice", role="admin")
+    users.update_one(
+        {"username": "alice"},
+        {"$set": {"email": "ancien@exemple.fr", "datasets_access": ["/data/ds1"]}},
+    )
+    lignes = [
+        ligne_import(1, "alice", nom="Martin", prenom="Alice", email="nouveau@exemple.fr")
+    ]
+
+    modifies, echecs = update_users_from_rows(users, lignes)
+
+    assert echecs == []
+    assert modifies == [{"nom": "Martin", "prenom": "Alice", "username": "alice"}]
+    en_base = users.find_one({"username": "alice"})
+    assert en_base["nom"] == "Martin"
+    assert en_base["prenom"] == "Alice"
+    assert en_base["email"] == "nouveau@exemple.fr"
+    # Ce que l'import ne doit jamais toucher
+    assert en_base["role"] == "admin"
+    assert en_base["password_hash"] == "hash_bidon"
+    assert en_base["datasets_access"] == ["/data/ds1"]
+
+
+@pytest.mark.parametrize("email_vide", [None, ""])
+def test_update_users_from_rows_email_vide_ne_remplace_pas(
+    users, creer_compte, email_vide
+):
+    """Un email vide dans le CSV n'efface pas l'email existant."""
+    creer_compte("alice")
+    users.update_one({"username": "alice"}, {"$set": {"email": "ancien@exemple.fr"}})
+
+    update_users_from_rows(users, [ligne_import(1, "alice", email=email_vide)])
+
+    assert users.find_one({"username": "alice"})["email"] == "ancien@exemple.fr"
+
+
+def test_update_users_from_rows_compte_introuvable(users, creer_compte):
+    """Un compte supprimé entre temps est signalé, sans bloquer les autres lignes."""
+    creer_compte("alice")
+    lignes = [ligne_import(1, "fantome"), ligne_import(2, "alice", nom="Martin")]
+
+    modifies, echecs = update_users_from_rows(users, lignes)
+
+    assert [m["username"] for m in modifies] == ["alice"]
+    assert len(echecs) == 1
+    assert echecs[0]["ligne"] == 1
+    assert echecs[0]["username"] == "fantome"
+    assert "introuvable" in echecs[0]["motif"]
+
+
+def test_update_users_from_rows_ne_touche_pas_les_autres_comptes(users, creer_compte):
+    """Seul le compte visé par la ligne est modifié."""
+    creer_compte("alice")
+    creer_compte("bob")
+
+    update_users_from_rows(users, [ligne_import(1, "alice", nom="Martin")])
+
+    assert users.find_one({"username": "bob"})["nom"] == "Nom"

@@ -28,7 +28,7 @@ MOTIF_NOM = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def nom_valide(nom: str) -> bool:
     """Indique si un nom est utilisable comme nom de dossier sur le serveur."""
-    return bool(MOTIF_NOM.match(nom or ""))
+    return bool(MOTIF_NOM.fullmatch(nom or ""))
 
 
 def dossier_utilisateur(username: str) -> str:

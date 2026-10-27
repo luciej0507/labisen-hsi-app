@@ -1,5 +1,5 @@
 """
-tests/test_auth.py : tests de modules/auth.py.
+tests/comptes/test_auth.py : tests de modules/comptes/auth.py.
 
 Deux éléments sont remplacés pendant les tests (avec monkeypatch) :
 - get_users_collection : renvoie la fausse collection mongomock au lieu de
@@ -74,6 +74,25 @@ def test_authenticate_username_sensible_a_la_casse(comptes):
     assert auth.authenticate("Alice", "secret123") is None
 
 
+@pytest.mark.parametrize(
+    "compte",
+    [
+        {"username": "attente", "role": "user", "password_hash": None},
+        {"username": "attente", "role": "user"},
+        {"username": "attente", "role": "user", "password_hash": ""},
+    ],
+    ids=["hash None", "hash absent", "hash vide"],
+)
+def test_authenticate_compte_en_attente(comptes, compte):
+    """Un compte sans mot de passe (créé par import CSV) ne peut pas se connecter."""
+    # dict(...) : on insère une copie, car insert_one ajoute un _id au dict
+    comptes.insert_one(dict(compte))
+
+    assert auth.authenticate("attente", "n'importe quoi") is None
+    assert auth.authenticate("attente", "") is None
+    assert auth.authenticate_with_role("attente", "n'importe quoi", "user") is None
+
+
 # ---------------------------------------------------------------------------
 # authenticate_with_role
 # ---------------------------------------------------------------------------
@@ -130,6 +149,18 @@ def test_logout_user_vide_la_session(session_state):
     assert "username" not in session_state
     # Les données sans rapport avec la connexion ne sont pas touchées
     assert session_state["autre_donnee"] == "a conserver"
+
+
+def test_logout_user_efface_les_donnees_de_la_page_admin(session_state):
+    """logout_user efface aussi le bilan d'import et le dernier compte créé."""
+    auth.login_user({"username": "admin1", "role": "admin"})
+    session_state["import_result"] = {"crees": 3}
+    session_state["ajout_created"] = {"username": "alice"}
+
+    auth.logout_user()
+
+    assert "import_result" not in session_state
+    assert "ajout_created" not in session_state
 
 
 def test_logout_user_sans_etre_connecte(session_state):

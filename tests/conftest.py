@@ -7,7 +7,6 @@ fichier de test du dossier, sans avoir besoin de les importer.
 
 import mongomock
 import pytest
-import streamlit as st
 
 
 @pytest.fixture
@@ -28,15 +27,18 @@ def creer_compte(users):
     Fournit une fonction qui insère rapidement un compte dans la fausse base.
     Le mot de passe n'est pas haché (bcrypt est lent) : ces comptes servent
     uniquement à préparer le décor des tests.
+
+    Avec password_hash=None, on crée un compte "en attente" (sans mot de
+    passe), comme ceux qui viennent de l'import CSV.
     """
 
-    def _creer(username: str, role: str = "user") -> dict:
+    def _creer(username: str, role: str = "user", password_hash="hash_bidon") -> dict:
         document = {
             "nom": "Nom",
             "prenom": "Prénom",
             "email": None,
             "username": username,
-            "password_hash": "hash_bidon",
+            "password_hash": password_hash,
             "role": role,
             "datasets_access": [],
         }
@@ -56,6 +58,10 @@ def session_state(monkeypatch):
     utilisent alors ce dictionnaire, sans avoir besoin d'une vraie session
     Streamlit. L'original est remis en place à la fin du test.
     """
+    # Import local : Streamlit n'est chargé que pour les tests qui utilisent
+    # cette fixture, et pas pour les autres (par exemple ceux des datasets)
+    import streamlit as st
+
     faux_etat = {}
     monkeypatch.setattr(st, "session_state", faux_etat)
     return faux_etat
