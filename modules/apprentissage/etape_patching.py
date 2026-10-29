@@ -2,7 +2,7 @@
 modules/apprentissage/etape_patching.py
 
 Étape 2 de la page Apprentissage : patching. Cette étape permet de choisir
-une version de patches déjà préparée, ou d'en créer une nouvelle.
+une version de patches déjà préparée, ou de lancer un nouveau patching.
 
 Les accès au serveur et les calculs sur les patches sont dans
 modules/versions_patching.py : ce fichier ne fait que préparer ce que la page affiche.
@@ -22,11 +22,14 @@ TOUS_LES_SPLITS_RESTANTS = "Tous les splits restants"
 # Split indispensable pour utiliser une version à l'entraînement
 SPLIT_ENTRAINEMENT = "Train"
 
-# Valeurs proposées pour chaque paramètre du format des patches
-CHOIX_N_LINES = [1, 100, 200, 300]
-CHOIX_PATCH_SIZE = [100, 200, 300]
-CHOIX_STRIDE_LINES = [1, 50, 100, 200]
-CHOIX_STRIDE_COLS = [50, 80, 100, 200]
+# Formats de patches proposés à l'utilisateur : {libellé: paramètres}
+# w = n_lines, h = patch_size, sl = stride_lines, sc = stride_cols
+FORMATS = {
+    "w1 h100 sl1 sc80": {"n_lines": 1, "patch_size": 100, "stride_lines": 1, "stride_cols": 80},
+    "w100 h100 sl50 sc50": {"n_lines": 100, "patch_size": 100, "stride_lines": 50, "stride_cols": 50},
+    "w200 h200 sl100 sc100": {"n_lines": 200, "patch_size": 200, "stride_lines": 100, "stride_cols": 100},
+    "w300 h300 sl200 sc200": {"n_lines": 300, "patch_size": 300, "stride_lines": 200, "stride_cols": 200},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +89,7 @@ def version_utilisable(version: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Nouvelle version
+# Nouveau patching
 # ---------------------------------------------------------------------------
 
 

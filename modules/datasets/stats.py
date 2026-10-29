@@ -2,11 +2,13 @@
 modules/datasets/stats.py
 
 Calcul de la conformité d'un dataset : nombre de cubes, annotations,
-fichiers manquants, état du split Train/Test/Val et liste des tâches
-restant à faire. Contient aussi la lecture des cubes et de leurs dimensions.
+images RGB, fichiers manquants, état du split Train/Test/Val et liste des
+tâches restant à faire. Contient aussi la lecture des cubes et de leurs
+dimensions.
 
 Les fonctions de ce module lisent le serveur via la connexion partagée
-de sftp.py. etat_split et tache_split n'ont aucune dépendance réseau.
+de sftp.py. etat_split, tache_split et tache_manquants n'ont aucune
+dépendance réseau.
 
 Ce module n'importe jamais Streamlit.
 """
@@ -57,6 +59,11 @@ def _stats_split(sftp, split_chemin):
     # Un cube est annoté si son masque png existe (même nom de base que le cube)
     annotes = cubes & ann_png
 
+    # Un cube a une image RGB si sa photo existe (même nom de base que le cube).
+    # Avec l'ancienne structure (sous-dossiers PNG et TIFF), aucune photo n'est
+    # trouvée directement dans RGB : ce nombre vaut donc 0.
+    avec_rgb = cubes & rgb
+
     # Ancienne structure : le dossier RGB contient encore des sous-dossiers
     # PNG ou TIFF au lieu des photos directement
     chemin_rgb = resoudre(sftp, split_chemin, "RGB")
@@ -71,10 +78,21 @@ def _stats_split(sftp, split_chemin):
     else:
         fichiers_ok = cubes & hdr & rgb
 
+    # Cubes auxquels il manque quelque chose (pour la liste "À faire").
+    # Pour l'ancienne structure, aucune image RGB n'est signalée manquante :
+    # c'est la tâche de migration qui s'en charge.
+    sans_masque = cubes - annotes
+    sans_hdr = cubes - hdr
+    sans_rgb = set() if ancienne_structure else cubes - rgb
+
     return {
         "cubes": len(cubes),
         "annotes": len(annotes),
+        "rgb": len(avec_rgb),
         "incomplets": len(cubes - fichiers_ok),
+        "sans_masque": len(sans_masque),
+        "sans_hdr": len(sans_hdr),
+        "sans_rgb": len(sans_rgb),
         "ancienne_structure": ancienne_structure,
     }
 
@@ -84,14 +102,22 @@ def _resultat(etat, splits=None):
     splits = splits or {}
     total = sum(s["cubes"] for s in splits.values())
     annotes = sum(s["annotes"] for s in splits.values())
+    rgb = sum(s["rgb"] for s in splits.values())
     incomplets = sum(s["incomplets"] for s in splits.values())
     # Vrai si au moins un split utilise encore l'ancienne structure RGB
     ancienne_structure = any(s["ancienne_structure"] for s in splits.values())
+    # Détail par split (cubes, masques, images RGB), pour le tableau de la page
+    details_par_split = {
+        nom: {"cubes": s["cubes"], "annotes": s["annotes"], "rgb": s["rgb"]}
+        for nom, s in splits.items()
+    }
     return {
         "etat": etat,
         "cubes_par_split": {nom: s["cubes"] for nom, s in splits.items()},
+        "details_par_split": details_par_split,
         "total_cubes": total,
         "annotes": annotes,
+        "rgb": rgb,
         "incomplets": incomplets,
         "ancienne_structure": ancienne_structure,
         "taches": [],
@@ -142,6 +168,26 @@ def tache_split(cubes_par_split: dict):
     return "Split incomplet (" + "; ".join(details) + ")"
 
 
+def tache_manquants(libelle: str, manquants_par_split: dict):
+    """
+    Renvoie le texte d'une tâche du type
+    "Masques d'annotation manquants : 2 (Test : 1, Val : 1)",
+    ou None si rien ne manque.
+
+    `manquants_par_split` donne, pour chaque split, le nombre d'éléments
+    manquants (ex : {"Train": 0, "Test": 1, "Val": 1}).
+    """
+    total = sum(manquants_par_split.values())
+    if total == 0:
+        return None
+
+    # Seuls les splits concernés apparaissent dans le détail
+    details = ", ".join(
+        f"{nom} : {nb}" for nom, nb in manquants_par_split.items() if nb > 0
+    )
+    return f"{libelle} : {total} ({details})"
+
+
 def calculer_stats(chemin_dataset: str) -> dict:
     """
     Calcule les stats d'un dataset à partir de sa structure sur le serveur.
@@ -153,7 +199,9 @@ def calculer_stats(chemin_dataset: str) -> dict:
       - "taches" : liste de textes décrivant tout ce qui reste à faire pour
         que le dataset soit complet (vide si "Complet")
       - "cubes_par_split" : nombre de cubes HSI par split trouvé
-      - "total_cubes", "annotes", "incomplets" : totaux sur tous les splits
+      - "details_par_split" : cubes, masques et images RGB pour chaque split
+      - "total_cubes", "annotes", "rgb", "incomplets" : totaux sur tous
+        les splits
     """
     try:
         sftp = obtenir_sftp()
@@ -189,13 +237,18 @@ def calculer_stats(chemin_dataset: str) -> dict:
         taches.append(
             "Ancienne structure RGB à migrer (retirer les dossiers PNG et TIFF)"
         )
-    if resultat["incomplets"] > 0:
-        taches.append(
-            f"{resultat['incomplets']} cube(s) avec des fichiers manquants"
-        )
-    masques_manquants = resultat["total_cubes"] - resultat["annotes"]
-    if masques_manquants > 0:
-        taches.append(f"{masques_manquants} masque(s) d'annotation manquant(s)")
+
+    # Éléments manquants : un message par type, avec le détail par split
+    manquants = [
+        ("Masques d'annotation manquants", "sans_masque"),
+        ("Images RGB manquantes", "sans_rgb"),
+        ("En-têtes .hdr manquants", "sans_hdr"),
+    ]
+    for libelle, cle in manquants:
+        par_split = {nom: s[cle] for nom, s in splits.items()}
+        message = tache_manquants(libelle, par_split)
+        if message:
+            taches.append(message)
 
     # Le dataset est complet seulement s'il n'y a plus rien à faire
     resultat["taches"] = taches

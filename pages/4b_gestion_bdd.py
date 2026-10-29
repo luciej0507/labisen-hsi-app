@@ -14,10 +14,9 @@ import streamlit as st
 from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif, get_datasets_autorises
 from modules.datasets.sftp import DATASETS_REMOTE_PATH
-from modules.datasets.stats import calculer_stats, etat_split
+from modules.datasets.stats import SPLITS, calculer_stats
 from modules.datasets.upload import ajouter_dataset, dossier_utilisateur
 from modules.db_mongo import get_users_collection
-from modules.versions_patching import lister_versions
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 
@@ -80,36 +79,49 @@ def stats_en_cache(chemin: str) -> dict:
     return stats
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def patches_en_cache(chemin: str) -> list:
+def couleur_split(details: dict):
     """
-    Enveloppe Streamlit autour de lister_versions : le résultat est gardé
-    5 minutes, pour ne pas interroger le serveur à chaque interaction.
+    Renvoie la couleur d'une ligne du tableau des splits.
 
-    Si le serveur est injoignable, lister_versions lève ConnectionError :
-    Streamlit ne met pas en cache une exception.
+    - "red" : le split est absent ou ne contient aucun cube
+    - "orange" : il y a des cubes, mais il manque des masques ou des images RGB
+    - None : le split est correct (texte sans couleur)
     """
-    return lister_versions(chemin)
+    if details["cubes"] == 0:
+        return "red"
+    if details["annotes"] < details["cubes"] or details["rgb"] < details["cubes"]:
+        return "orange"
+    return None
 
 
-def afficher_patches(chemin: str) -> None:
+def tableau_splits(details_par_split: dict) -> str:
     """
-    Affiche la ligne "Patches" d'une carte : "Non préparé" ou le nombre de
-    versions préparées, avec le nom de chaque version en texte gris.
+    Construit le tableau markdown des splits : une ligne par split avec le
+    nombre de cubes, de masques et d'images RGB. La ligne est colorée selon
+    couleur_split.
     """
-    try:
-        versions = patches_en_cache(chemin)
-    except ConnectionError:
-        st.caption("Patches : serveur injoignable.")
-        return
+    # En-tête du tableau. La deuxième ligne règle l'alignement des colonnes :
+    # nom du split à gauche, chiffres centrés
+    lignes = ["| Split | Cubes | Masques | RGB |", "|:--|:-:|:-:|:-:|"]
 
-    if not versions:
-        st.markdown("Patches : **Non préparé**")
-        return
+    for nom in SPLITS:
+        # Un split absent du résultat compte comme un split vide
+        details = details_par_split.get(nom, {"cubes": 0, "annotes": 0, "rgb": 0})
+        cellules = [
+            nom,
+            str(details["cubes"]),
+            str(details["annotes"]),
+            str(details["rgb"]),
+        ]
 
-    # Nom des versions (ex : w1_h100_sl1_sc80), séparés par des virgules
-    noms = ", ".join(version["nom"] for version in versions)
-    st.markdown(f"Patches : **{len(versions)} version(s)**  \n:gray[{noms}]")
+        # Colorer toute la ligne : on colore chaque cellule
+        couleur = couleur_split(details)
+        if couleur:
+            cellules = [f":{couleur}[{cellule}]" for cellule in cellules]
+
+        lignes.append("| " + " | ".join(cellules) + " |")
+
+    return "\n".join(lignes)
 
 
 def afficher_entete(nom: str, etat: str, cle: str) -> None:
@@ -127,7 +139,7 @@ def afficher_entete(nom: str, etat: str, cle: str) -> None:
 
 
 def afficher_carte(chemin: str) -> None:
-    """Affiche la carte d'un dataset : bandeau, encadré de statistiques et tâches."""
+    """Affiche la carte d'un dataset : bandeau, encadré de statistiques et menu des tâches."""
     # Le nom du dataset est le dernier morceau du chemin
     nom = os.path.basename(chemin.rstrip("/"))
 
@@ -160,46 +172,40 @@ def afficher_carte(chemin: str) -> None:
             )
             return
 
-        # État du split (Fait, Incomplet ou Non fait), règle définie dans modules/datasets/stats.py
-        cubes_par_split = stats["cubes_par_split"]
-        etat_du_split = etat_split(cubes_par_split)
+        # .get() évite une KeyError si le résultat en cache date d'avant
+        # l'ajout du détail par split
+        details_par_split = stats.get("details_par_split")
 
-        # Détail du nombre de cubes par split, en texte gris
-        detail_split = ", ".join(
-            f"{nom_split} {nb}" for nom_split, nb in cubes_par_split.items()
-        )
-
-        # Encadré discret des statistiques, sur deux colonnes
-        # (deux espaces + retour = saut de ligne)
-        with st.container(key=f"stats-{cle}"):
-            colonne_gauche, colonne_droite = st.columns(2)
-            colonne_gauche.markdown(
-                f"Cubes HSI : **{stats['total_cubes']}**  \n"
-                f"Annotation : **{stats['annotes']}/{stats['total_cubes']}**"
+        if details_par_split is None:
+            st.caption(
+                "Statistiques obsolètes. Cliquez sur Rafraîchir les "
+                "statistiques pour afficher le détail."
             )
-            colonne_droite.markdown(
-                f"Split : **{etat_du_split}**  \n"
-                f":gray[{detail_split}]"
-            )
+        else:
+            # Encadré discret des statistiques : totaux puis tableau par split
+            # (deux espaces + retour = saut de ligne)
+            with st.container(key=f"stats-{cle}"):
+                total = stats["total_cubes"]
+                st.markdown(
+                    f"Cubes HSI : **{total}**  \n"
+                    f"Masques d'annotation : **{stats['annotes']}/{total}**  \n"
+                    f"Images RGB : **{stats['rgb']}/{total}**"
+                )
+                st.markdown(tableau_splits(details_par_split))
 
-        # Seuls les datasets complets peuvent être préparés : on n'affiche
-        # la ligne "Patches" que pour eux (évite aussi des appels au serveur)
-        if etat == "Complet":
-            afficher_patches(chemin)
-
-        # Bloc "À faire" sans fond, en liste à puces. .get() évite une
-        # KeyError si le résultat en cache date d'avant l'ajout de cette clé.
+        # Menu déroulant "À faire", replié par défaut : le nombre de tâches
+        # est dans le titre. .get() évite une KeyError si le résultat en cache
+        # date d'avant l'ajout de cette clé.
         taches = stats.get("taches", [])
         if taches:
-            liste = "\n".join("- " + tache for tache in taches)
-            st.markdown("**À faire**\n\n" + liste)
-
+            with st.expander(f"À faire ({len(taches)})", expanded=False):
+                st.markdown("\n".join("- " + tache for tache in taches))
 
 
 def afficher_projet(parent: str, datasets: list, username: str) -> None:
     """
     Affiche un groupe de datasets : son titre, puis ses cartes par rangées.
- 
+
     Trois cas pour le titre :
       - dossier personnel de l'utilisateur : "Mes bases importées"
       - racine du serveur (datasets attribués par l'admin) : "Bases attribuées"
@@ -207,7 +213,7 @@ def afficher_projet(parent: str, datasets: list, username: str) -> None:
     """
     racine = DATASETS_REMOTE_PATH.rstrip("/")
     parent = parent.rstrip("/")
- 
+
     if parent == racine:
         st.subheader("Bases attribuées")
     elif parent == dossier_utilisateur(username):
@@ -217,7 +223,7 @@ def afficher_projet(parent: str, datasets: list, username: str) -> None:
         st.markdown("#### " + os.path.basename(parent))
         # Chemin complet du projet (relatif à la racine) pour lever toute ambiguïté
         st.caption(chemin_relatif(DATASETS_REMOTE_PATH, parent))
- 
+
     # Une rangée de 3 colonnes à la fois : on passe à la suivante quand elle est pleine
     for debut in range(0, len(datasets), CARTES_PAR_RANGEE):
         colonnes = st.columns(CARTES_PAR_RANGEE)
@@ -229,12 +235,10 @@ def afficher_projet(parent: str, datasets: list, username: str) -> None:
                 afficher_carte(chemin)
 
 
-
-
 def afficher_formulaire_ajout(users, username: str) -> None:
     """
     Affiche le formulaire d'ajout d'une base de données (archive zip).
- 
+
     L'envoi et l'attribution des droits sont gérés par ajouter_dataset
     (modules/datasets/upload.py) : cette fonction ne s'occupe que de l'affichage.
     """
@@ -243,13 +247,13 @@ def afficher_formulaire_ajout(users, username: str) -> None:
     message = st.session_state.pop("message_ajout", None)
     if message:
         st.success(message)
- 
+
     with st.expander("Ajouter une base de données"):
         st.caption(
             "L'archive zip doit contenir les dossiers Train, Test et Val. "
             "Consultez la page Mode d'emploi pour connaître la structure attendue."
         )
- 
+
         # Un formulaire : rien n'est envoyé tant que le bouton n'est pas cliqué
         with st.form("formulaire_ajout_bdd"):
             nom = st.text_input(
@@ -258,30 +262,28 @@ def afficher_formulaire_ajout(users, username: str) -> None:
             )
             fichier = st.file_uploader("Archive zip", type=["zip"])
             valide = st.form_submit_button("Envoyer sur le serveur")
- 
+
         if not valide:
             return
- 
+
         nom = nom.strip()
         if not nom or fichier is None:
             st.error("Renseignez un nom et choisissez une archive zip.")
             return
- 
+
         # L'envoi peut être long pour de gros datasets
         with st.spinner("Envoi en cours, cela peut prendre du temps..."):
             succes, message = ajouter_dataset(users, fichier, username, nom)
- 
+
         if not succes:
             st.error(message)
             return
- 
+
         # Succès : on vide le cache des statistiques et on relance la page
         # pour afficher la nouvelle carte
         stats_en_cache.clear()
         st.session_state["message_ajout"] = message
         st.rerun()
-
-
 
 
 # Injection du style des cartes (une seule fois par chargement de page)
@@ -292,11 +294,11 @@ st.title("Gestion des bases de données")
 # Nom d'utilisateur de la personne connectée (même clé que dans la page admin)
 username = st.session_state.get("username")
 users = get_users_collection()
- 
+
 # Le formulaire est affiché AVANT le st.stop() ci-dessous : un utilisateur
 # sans aucun dataset doit pouvoir en ajouter un
 afficher_formulaire_ajout(users, username)
- 
+
 # Lecture des droits en base à chaque chargement de la page
 chemins = get_datasets_autorises(users, username)
 
@@ -318,7 +320,7 @@ for chemin in sorted(chemins):
 
 # Dossier personnel de l'utilisateur, affiché en premier
 dossier_perso = dossier_utilisateur(username)
- 
+
 with st.spinner("Calcul des statistiques en cours..."):
     # Ordre : dossier personnel d'abord, puis les autres par ordre alphabétique
     # (la clé de tri place False, donc le dossier perso, avant True)

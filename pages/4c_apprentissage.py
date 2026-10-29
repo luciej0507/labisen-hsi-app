@@ -15,10 +15,7 @@ from modules.apprentissage.etape_dataset import (
     resume_dataset,
 )
 from modules.apprentissage.etape_patching import (
-    CHOIX_N_LINES,
-    CHOIX_PATCH_SIZE,
-    CHOIX_STRIDE_COLS,
-    CHOIX_STRIDE_LINES,
+    FORMATS,
     apercu_patching,
     construire_parametres,
     cubes_a_patcher,
@@ -191,27 +188,10 @@ def etape_dataset():
 # Étape 2 : patching
 # ---------------------------------------------------------------------------
 
-def choisir_valeur(label, options, aide, desactive=False):
-    """Affiche une rangée de boutons (pills) et retourne la valeur choisie.
-
-    Si l'utilisateur désélectionne le bouton actif, st.pills renvoie None :
-    on revient alors à la première valeur de la liste.
-    """
-    choix = st.pills(
-        label,
-        options,
-        default=options[0],
-        selection_mode="single",
-        help=aide,
-        disabled=desactive,
-    )
-    return options[0] if choix is None else choix
-
-
 def section_versions_existantes(versions):
     """Affiche les versions déjà préparées et permet d'en choisir une."""
     if not versions:
-        st.info("Aucune version préparée pour ce dataset. Créez-en une ci-dessous.")
+        st.info("Aucune version préparée pour ce dataset. Lancez un nouveau patching ci-dessous.")
         return
 
     st.markdown(f"**Versions déjà préparées ({len(versions)})**")
@@ -240,33 +220,25 @@ def section_versions_existantes(versions):
         st.rerun()
 
 
-def section_nouvelle_version(chemin_dataset, versions):
-    """Permet de créer une version : format, splits restants, aperçu, lancement."""
+def section_nouveau_patching(chemin_dataset, versions):
+    """Permet de lancer un patching : format, splits restants, aperçu, lancement."""
     # Repliée quand des versions existent déjà, dépliée sinon
-    with st.expander("Créer une nouvelle version", expanded=not versions):
-        # Format des patches : une rangée de boutons par paramètre
+    with st.expander("Nouveau patching", expanded=not versions):
+        # Format des patches : un choix parmi les formats fixes
+        choix_format = st.radio("Format des patches", list(FORMATS), horizontal=True)
         full_width = st.toggle("Largeur complète (full_width)", value=False)
-        n_lines = choisir_valeur(
-            "Nombre de lignes (w)", CHOIX_N_LINES, "Largeur de chaque patch."
-        )
-        patch_size = choisir_valeur(
-            "Taille du patch (h)",
-            CHOIX_PATCH_SIZE,
-            "Taille de chaque patch en colonnes. Désactivé en largeur complète.",
-            desactive=full_width,
-        )
-        stride_lines = choisir_valeur(
-            "Stride lignes (sl)",
-            CHOIX_STRIDE_LINES,
-            "Décalage, en lignes, entre deux patches consécutifs.",
-        )
-        stride_cols = choisir_valeur(
-            "Stride colonnes (sc)",
-            CHOIX_STRIDE_COLS,
-            "Décalage, en colonnes, entre deux patches consécutifs. "
-            "Désactivé en largeur complète.",
-            desactive=full_width,
-        )
+        if full_width:
+            st.caption(
+                "En largeur complète, h et sc sont remplacés par la largeur des cubes. "
+                "Seuls w et sl du format choisi sont utilisés."
+            )
+
+        # Paramètres du format choisi
+        format_choisi = FORMATS[choix_format]
+        n_lines = format_choisi["n_lines"]
+        patch_size = format_choisi["patch_size"]
+        stride_lines = format_choisi["stride_lines"]
+        stride_cols = format_choisi["stride_cols"]
 
         # Dimensions de tous les cubes, lues une seule fois pour le dataset
         with st.spinner("Lecture des dimensions des cubes..."):
@@ -362,24 +334,24 @@ def section_lancement(chemin_dataset, dimensions, splits, parametres, nom_dossie
 
 
 def etape_patching():
-    """Étape 2 : versions déjà préparées, ou création d'une nouvelle version."""
+    """Étape 2 : versions déjà préparées, ou lancement d'un nouveau patching."""
     st.subheader("Patching")
     st.caption(
         "Les cubes doivent être découpés en patches avant l'entraînement. "
-        "Utilisez une version déjà préparée ou créez-en une nouvelle."
+        "Utilisez une version déjà préparée ou lancez un nouveau patching."
     )
 
     chemin_dataset = st.session_state["appr_dataset"]
     with st.spinner("Recherche des versions déjà préparées..."):
         versions = versions_du_dataset(chemin_dataset)
 
-    # Serveur injoignable : on ne peut ni lister ni créer de version
+    # Serveur injoignable : on ne peut ni lister les versions ni lancer de patching
     if versions is None:
         st.warning("Serveur injoignable : impossible de lire les versions déjà préparées.")
         return
 
     section_versions_existantes(versions)
-    section_nouvelle_version(chemin_dataset, versions)
+    section_nouveau_patching(chemin_dataset, versions)
 
 
 # ---------------------------------------------------------------------------

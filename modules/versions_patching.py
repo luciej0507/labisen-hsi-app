@@ -1,5 +1,5 @@
 """
-modules/patches.py
+modules/version_patching.py
 
 Lecture des versions préparées (patches) d'un dataset, et calculs liés au
 patching des cubes HSI.
@@ -30,7 +30,7 @@ from modules.datasets.sftp import lister_noms, obtenir_sftp
 from modules.datasets.stats import SPLITS
 
 # Dossier des patches, à l'intérieur du dataset (même nom que dans data_utils.py)
-NOM_DOSSIER_PATCHING = "hsi-data-patching"
+NOM_DOSSIER_PATCHING = "hsi_data_patching"
 
 # Forme d'un nom de format, par exemple w100_h100_sl50_sc80. Les autres
 # dossiers sont ignorés. Cette règle existe aussi dans data_utils.py, qui
