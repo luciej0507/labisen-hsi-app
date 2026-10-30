@@ -5,28 +5,30 @@ Règles de la frise de la page Apprentissage : liste des étapes, étapes
 validées et verrouillage des étapes suivantes.
 
 Le parcours est obligatoire : un dataset à l'état Complet, puis le
-patching, puis le choix de l'entraînement, puis le récapitulatif.
+patching, puis le paramétrage de l'entraînement, puis le lancement et
+le suivi.
 """
 
 # Étapes du parcours, dans l'ordre d'affichage de la frise
 ETAPES = [
     {"cle": "dataset", "titre": "Dataset"},
     {"cle": "patching", "titre": "Patching"},
-    {"cle": "entrainement", "titre": "Entraînement"},
-    {"cle": "recapitulatif", "titre": "Récapitulatif"},
+    {"cle": "parametrage", "titre": "Paramétrage"},
+    {"cle": "lancement", "titre": "Lancement et suivi"},
 ]
 
 
-def etapes_validees(dataset, version) -> list:
+def etapes_validees(dataset, version, config) -> list:
     """
     Renvoie une liste de booléens (un par étape) indiquant celles qui
     sont validées.
 
     - Dataset : validée dès qu'un dataset a été choisi.
     - Patching : validée dès qu'une version de patches a été choisie.
-    - Les deux dernières étapes suivront avec leur contenu.
+    - Paramétrage : validée dès qu'une configuration a été enregistrée.
+    - Lancement et suivi : suivra avec son contenu.
     """
-    return [dataset is not None, version is not None, False, False]
+    return [dataset is not None, version is not None, config is not None, False]
 
 
 def etape_accessible(index: int, validees: list) -> bool:
