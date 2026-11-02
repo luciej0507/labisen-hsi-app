@@ -356,6 +356,12 @@ def section_versions_existantes(versions):
             "Le split Train n'est pas encore patché pour ces formats : "
             "ils ne peuvent pas servir à l'entraînement. Complétez-en un ci-dessous."
         )
+    else:
+        # Au moins un format est utilisable : l'utilisateur peut avancer
+        st.info(
+            "Les formats de patches nécessaires sont déjà prêts : vous n'avez "
+            "rien de plus à faire ici. Vous pouvez passer directement à l'étape suivante."
+        )
 
     # Si aucun format n'est encore retenu, le premier utilisable sert de défaut.
     # Il pourra être modifié à l'étape suivante.
@@ -757,56 +763,52 @@ def etape_parametrage():
 # Étape 4 : lancement et suivi (ébauche)
 # ---------------------------------------------------------------------------
 
-# Nombre de cartes par rangée dans le récapitulatif de l'étape 4
-CARTES_RECAP_PAR_RANGEE = 2
-
-
 def css_cartes_recapitulatif():
-    """Construit le CSS qui encadre les cartes du récapitulatif.
+    """Construit le CSS des sections du récapitulatif.
 
-    Chaque carte est un conteneur de clé "recap-<teinte>" qui reçoit la classe
-    CSS "st-key-recap-<teinte>". La bordure prend la même couleur que le titre
-    du bloc, sans fond coloré.
+    Chaque section est un conteneur de clé "recap-<teinte>" qui reçoit la
+    classe CSS "st-key-recap-<teinte>". Elle est repérée par une barre colorée
+    sur son bord gauche, de la même couleur que son titre.
     """
     regles = ""
     for nom, (rvb, couleur) in TEINTES.items():
         regles += (
             f'div[class*="st-key-recap-{nom}"] {{'
-            f" border: 1px solid {couleur};"
-            " border-radius: 0.5rem; padding: 0.75rem 1rem; }"
+            f" border-left: 4px solid {couleur}; padding-left: 0.75rem; }}"
         )
     return f"<style>{regles}</style>"
 
 
 def bloc_recapitulatif(titre, teinte, lignes):
-    """Affiche une carte du récapitulatif : titre coloré, puis une ligne nom / valeur par choix."""
+    """Affiche une section du récapitulatif : titre coloré, puis une ligne "nom : valeur" par choix."""
     couleur = TEINTES[teinte][1]
-    # La clé du conteneur donne la classe CSS qui dessine la bordure colorée
+    # La clé du conteneur donne la classe CSS qui dessine la barre colorée
     with st.container(key=f"recap-{teinte}"):
         st.markdown(
             f'<span style="color:{couleur}; font-weight:600">{titre}</span>',
             unsafe_allow_html=True,
         )
-        # Une ligne par choix : le nom en gris discret, la valeur en gras
-        for nom, valeur in lignes:
-            colonne_nom, colonne_valeur = st.columns([3, 2])
-            colonne_nom.caption(nom)
-            colonne_valeur.markdown(f"**{valeur}**")
+        # Une seule ligne par choix : le nom en gris, la valeur en gras.
+        # Deux espaces + retour = saut de ligne.
+        st.markdown(
+            "  \n".join(f":gray[{nom}] : **{valeur}**" for nom, valeur in lignes)
+        )
 
 
 def section_recapitulatif(config):
-    """Rappelle la configuration validée à l'étape 3, en grille de cartes 2 x 2."""
+    """Rappelle la configuration validée à l'étape 3, dans un seul cadre à deux colonnes."""
     st.markdown("**Récapitulatif de la configuration**")
     st.markdown(css_cartes_recapitulatif(), unsafe_allow_html=True)
 
     blocs = blocs_recapitulatif(config)
-    # Les cartes sont posées par rangées de deux, dans l'ordre des expanders
-    for debut in range(0, len(blocs), CARTES_RECAP_PAR_RANGEE):
-        colonnes = st.columns(CARTES_RECAP_PAR_RANGEE)
-        lot = blocs[debut:debut + CARTES_RECAP_PAR_RANGEE]
-        for colonne, (titre, teinte, lignes) in zip(colonnes, lot):
+    # Colonne de gauche : blocs 1 et 2. Colonne de droite : blocs 3 et 4.
+    # Les deux colonnes ont ainsi à peu près la même hauteur.
+    with st.container(border=True):
+        gauche, droite = st.columns(2)
+        for colonne, lot in ((gauche, blocs[:2]), (droite, blocs[2:])):
             with colonne:
-                bloc_recapitulatif(titre, teinte, lignes)
+                for titre, teinte, lignes in lot:
+                    bloc_recapitulatif(titre, teinte, lignes)
 
 
 def etape_lancement():
@@ -834,6 +836,27 @@ def etape_lancement():
             f"Lancement pas encore branché : l'entraînement serait lancé sur le GPU {gpu}. "
             "Le suivi dans MLflow sera ajouté ensuite."
         )
+
+
+# ---------------------------------------------------------------------------
+# Bouton retour
+# ---------------------------------------------------------------------------
+
+def bouton_retour():
+    """Affiche un bouton pour revenir à l'étape précédente (dès la 2e étape).
+
+    Revenir en arrière ne réinitialise rien : seule l'étape active change,
+    comme lors d'un clic sur la frise.
+    """
+    etape = st.session_state["appr_etape"]
+    # Pas de retour possible depuis la première étape
+    if etape == 0:
+        return
+
+    st.divider()
+    if st.button("Retour à l'étape précédente", key="bouton_retour"):
+        st.session_state["appr_etape"] = etape - 1
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -882,6 +905,9 @@ def main():
         etape_parametrage()
     else:
         etape_lancement()
+
+    # Bouton retour en bas de page, sous l'étape active
+    bouton_retour()
 
 
 main()
