@@ -15,3 +15,6 @@ __pycache__/
 *.pyc
 .coverage
 htmlcov/
+
+# Fichiers générés par les outils de suivi de patching
+suivi_patching/

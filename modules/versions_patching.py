@@ -71,6 +71,35 @@ def date_modification(sftp, chemin: str):
         return None
 
 
+def lister_fractions(sftp, chemin_dataset: str, split: str, nom_format: str) -> list:
+    """
+    Renvoie les fractions de CSV (en %) présentes pour un split et un format,
+    triées par ordre croissant, par exemple [10, 20, 50, 100].
+
+    Les fichiers sont nommés <fraction>%_<split>_<format>.csv. La liste est
+    vide si le dossier est illisible.
+    """
+    nom_split = split.lower()
+    dossier = (
+        f"{chemin_patching(chemin_dataset)}/HSI/csv_for_dataloader/"
+        f"{nom_split}/{nom_format}"
+    )
+    # Le nom du format ne contient que des lettres, des chiffres et "_" :
+    # il peut être inséré tel quel dans le motif
+    motif = re.compile(rf"^(\d+)%_{nom_split}_{nom_format}\.csv$")
+    try:
+        noms = sftp.listdir(dossier)
+    except IOError:
+        return []
+
+    fractions = []
+    for nom in noms:
+        correspondance = motif.match(nom)
+        if correspondance:
+            fractions.append(int(correspondance.group(1)))
+    return sorted(fractions)
+
+
 def lister_versions(chemin_dataset: str) -> list:
     """
     Liste les versions préparées d'un dataset.
@@ -78,6 +107,8 @@ def lister_versions(chemin_dataset: str) -> list:
     Renvoie une liste de dictionnaires triée par nom, avec les clés :
       - "nom" : le format, par exemple w100_h100_sl50_sc80
       - "splits_prets" : les splits patchés pour ce format (Train, Test, Val)
+      - "fractions" : pour chaque split patché, les fractions de CSV
+        disponibles, par exemple {"Train": [10, 20, 100], "Val": [100]}
       - "date_creation" : date ISO du CSV à 100 % le plus récent
 
     Un format dont aucun split n'a son CSV à 100 % n'est pas listé (patching
@@ -93,7 +124,8 @@ def lister_versions(chemin_dataset: str) -> list:
 
     racine = chemin_patching(chemin_dataset)
 
-    # Pour chaque format trouvé : la date du CSV à 100 % de chaque split prêt
+    # Pour chaque format trouvé : pour chaque split prêt, la date du CSV
+    # à 100 % et les fractions de CSV disponibles
     formats = {}
     for split in SPLITS:
         dossier_split = f"{racine}/HSI/csv_for_dataloader/{split.lower()}"
@@ -102,16 +134,20 @@ def lister_versions(chemin_dataset: str) -> list:
                 continue
             date = date_modification(sftp, chemin_marqueur(chemin_dataset, split, nom_format))
             if date is not None:
-                formats.setdefault(nom_format, {})[split] = date
+                formats.setdefault(nom_format, {})[split] = {
+                    "date": date,
+                    "fractions": lister_fractions(sftp, chemin_dataset, split, nom_format),
+                }
 
     versions = []
     for nom_format in sorted(formats):
-        dates = formats[nom_format]
-        plus_recente = max(dates.values())
+        par_split = formats[nom_format]
+        plus_recente = max(infos["date"] for infos in par_split.values())
         versions.append(
             {
                 "nom": nom_format,
-                "splits_prets": [s for s in SPLITS if s in dates],
+                "splits_prets": [s for s in SPLITS if s in par_split],
+                "fractions": {s: infos["fractions"] for s, infos in par_split.items()},
                 "date_creation": datetime.fromtimestamp(plus_recente).isoformat(timespec="seconds"),
             }
         )

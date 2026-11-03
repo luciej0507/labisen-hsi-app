@@ -8,12 +8,18 @@ Les accès au serveur et les calculs sur les patches sont dans
 modules/versions_patching.py : ce fichier ne fait que préparer ce que la page affiche.
 """
 
-import time
+import hashlib
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+from datetime import datetime
+from pathlib import Path
 
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
 from modules.versions_patching import estimer_nb_patches, lister_versions, splits_non_patches
-
-from modules.apprentissage.formats import formater_date
 
 # Choix de split source pour le patching : un split, ou tous ceux à patcher
 TOUS_LES_SPLITS = "Tous les splits"
@@ -51,17 +57,26 @@ def lire_versions(chemin_dataset: str):
 def lignes_versions(versions: list) -> list:
     """
     Prépare les lignes du tableau des versions déjà préparées : une ligne
-    par version, avec les splits patchés et la date de création.
+    par format, une colonne par split (fractions de CSV disponibles, ou
+    "Non patché") et la date de création sans l'heure.
+
+    Le format w1 est placé en premier. Le tri est stable : les autres
+    formats gardent leur ordre.
     """
+    versions = sorted(versions, key=lambda v: not v["nom"].startswith("w1_"))
     lignes = []
     for version in versions:
-        lignes.append(
-            {
-                "Version": version["nom"],
-                "Splits patchés": ", ".join(version["splits_prets"]),
-                "Date de création": formater_date(version["date_creation"]),
-            }
-        )
+        ligne = {"Format": version["nom"]}
+        for split in SPLITS:
+            if split in version["fractions"]:
+                fractions = version["fractions"][split]
+                # Split patché : on liste les fractions (ou "Patché" si illisibles)
+                ligne[split] = ", ".join(f"{f} %" for f in fractions) or "Patché"
+            else:
+                ligne[split] = "Non patché"
+        date = datetime.fromisoformat(version["date_creation"])
+        ligne["Créé le"] = date.strftime("%d/%m/%Y")
+        lignes.append(ligne)
     return lignes
 
 
@@ -204,18 +219,6 @@ def largeur_commune(dimensions_dataset: dict):
     return largeurs.pop(), None
 
 
-def cubes_a_patcher(dimensions_dataset: dict, splits: list) -> list:
-    """
-    Renvoie la liste des cubes à patcher, sous la forme de couples
-    (split, nom du cube), dans l'ordre des splits.
-    """
-    couples = []
-    for split in splits:
-        for cube in dimensions_dataset.get(split, {}):
-            couples.append((split, cube))
-    return couples
-
-
 def apercu_patching(dimensions_dataset: dict, splits: list, parametres: dict) -> dict:
     """
     Estime le résultat du patching avant de le lancer.
@@ -251,11 +254,160 @@ def apercu_patching(dimensions_dataset: dict, splits: list, parametres: dict) ->
     }
 
 
-def lancer_patching_cube(chemin_dataset, split, nom_cube, parametres):
-    """
-    Lance le patching d'un cube.
+# ---------------------------------------------------------------------------
+# Lancement en arrière-plan et suivi
+#
+# Le patching est un processus indépendant de l'application : Streamlit le
+# lance, puis lit seulement son fichier de suivi (JSON). Pour passer sur le
+# serveur, il suffira de remplacer lancer_patching, lire_suivi,
+# processus_actif et annuler_patching par des versions SSH.
+# ---------------------------------------------------------------------------
 
-    Fonction factice : à remplacer par le lancement du script
-    data_utils.py sur le serveur (voir modules/serveur.py).
+# Script de patching et interpréteur Python qui le lance. L'interpréteur doit
+# disposer de torch, spectral, pandas, etc. (à adapter selon votre installation).
+SCRIPT_PATCHING = Path("scripts_serveur/data_utils.py")
+PYTHON_PATCHING = sys.executable
+
+# Dossier où sont écrits le fichier de suivi et le journal de chaque patching
+DOSSIER_SUIVI = Path("suivi_patching")
+
+
+def base_fichiers_job(chemin_dataset) -> str:
     """
-    time.sleep(0.3)  # simulation d'un traitement, à supprimer
+    Renvoie le début du nom des fichiers du job d'un dataset (sans extension).
+
+    Le nom est déduit du dataset : on retrouve donc le job après un
+    rechargement de la page. Il y a un seul job à la fois par dataset.
+    """
+    empreinte = hashlib.md5(str(chemin_dataset).encode("utf-8")).hexdigest()[:10]
+    return str(DOSSIER_SUIVI / f"{Path(chemin_dataset).name}_{empreinte}")
+
+
+def chemin_suivi(chemin_dataset) -> Path:
+    """Renvoie le chemin du fichier de suivi (JSON) du job d'un dataset."""
+    return Path(base_fichiers_job(chemin_dataset) + ".json")
+
+
+def chemin_journal(chemin_dataset) -> Path:
+    """Renvoie le chemin du journal (sortie texte du script) du job d'un dataset."""
+    return Path(base_fichiers_job(chemin_dataset) + ".log")
+
+
+def ecrire_suivi_local(chemin_dataset, suivi: dict):
+    """Écrit le fichier de suivi (fichier temporaire puis renommage, jamais lu à moitié)."""
+    fichier = chemin_suivi(chemin_dataset)
+    fichier.parent.mkdir(parents=True, exist_ok=True)
+    temporaire = Path(str(fichier) + ".tmp")
+    temporaire.write_text(json.dumps(suivi, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporaire, fichier)
+
+
+def lire_suivi(chemin_dataset):
+    """Renvoie le contenu du fichier de suivi, ou None s'il n'existe pas ou est illisible."""
+    try:
+        with open(chemin_suivi(chemin_dataset), encoding="utf-8") as fichier:
+            return json.load(fichier)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def processus_actif(pid) -> bool:
+    """Indique si un processus existe encore (envoi du signal 0, qui ne fait rien)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Le processus existe mais appartient à un autre utilisateur
+        return True
+    return True
+
+
+def etat_job(chemin_dataset):
+    """
+    Renvoie le suivi du job d'un dataset, ou None s'il n'y en a pas.
+
+    Si le fichier dit "en cours" mais que le processus n'existe plus (plantage,
+    arrêt forcé, redémarrage), l'état renvoyé est "interrompu".
+    """
+    suivi = lire_suivi(chemin_dataset)
+    if suivi is not None and suivi.get("etat") == "en cours" and not processus_actif(suivi.get("pid")):
+        suivi["etat"] = "interrompu"
+        suivi["message"] = "Le processus s'est arrêté avant la fin."
+    return suivi
+
+
+def lancer_patching(chemin_dataset, splits: list, parametres: dict):
+    """
+    Lance data_utils.py en arrière-plan et rend la main immédiatement.
+
+    Le processus est détaché de l'application (nouvelle session) : il
+    continue si la page est rechargée ou fermée. Sa sortie va dans le journal.
+    """
+    DOSSIER_SUIVI.mkdir(parents=True, exist_ok=True)
+
+    commande = [
+        PYTHON_PATCHING, str(SCRIPT_PATCHING),
+        "--dataset", str(chemin_dataset),
+        "--splits", *[s.lower() for s in splits],
+        "--n-lines", str(parametres["n_lines"]),
+        "--stride-lines", str(parametres["stride_lines"]),
+        "--suivi", str(chemin_suivi(chemin_dataset)),
+    ]
+    if parametres["full_width"]:
+        commande.append("--full-width")
+    else:
+        commande += [
+            "--patch-size", str(parametres["patch_size"]),
+            "--stride-cols", str(parametres["stride_cols"]),
+        ]
+
+    # Le journal reçoit la sortie normale et les erreurs du script
+    with open(chemin_journal(chemin_dataset), "w", encoding="utf-8") as journal:
+        processus = subprocess.Popen(
+            commande, stdout=journal, stderr=subprocess.STDOUT, start_new_session=True
+        )
+
+    # Un thread attend la fin du processus pour que le système le libère
+    # proprement (sinon il reste "zombie" et paraît toujours actif)
+    threading.Thread(target=processus.wait, daemon=True).start()
+
+    # Suivi initial : le script met plusieurs secondes à démarrer (imports),
+    # et il écrasera ce fichier dès qu'il aura son propre état
+    ecrire_suivi_local(chemin_dataset, {
+        "etat": "en cours",
+        "format": "",
+        "splits": list(splits),
+        "cubes_total": 0,
+        "cubes_faits": 0,
+        "cube_courant": "",
+        "message": "",
+        "pid": processus.pid,
+        "debut": datetime.now().isoformat(timespec="seconds"),
+    })
+
+
+def annuler_patching(chemin_dataset):
+    """
+    Arrête le patching en cours et note l'annulation dans le fichier de suivi.
+
+    Le split interrompu n'a pas son CSV à 100 % : il reste donc non patché
+    et pourra être relancé (le script repart alors de zéro pour ce split).
+    """
+    suivi = lire_suivi(chemin_dataset)
+    if suivi is None:
+        return
+    pid = suivi.get("pid")
+    if processus_actif(pid):
+        # Le processus est chef de sa propre session : on arrête tout son groupe
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    suivi["etat"] = "annule"
+    suivi["message"] = "Patching annulé par l'utilisateur."
+    ecrire_suivi_local(chemin_dataset, suivi)
+
+
+def effacer_suivi(chemin_dataset):
+    """Supprime le fichier de suivi (ce qui masque le dernier résultat dans la page)."""
+    chemin_suivi(chemin_dataset).unlink(missing_ok=True)
