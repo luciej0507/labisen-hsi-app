@@ -32,7 +32,6 @@ from ui.arbre_datasets import afficher_arborescence_datasets, lire_selection
 from ui.flash import flash, render_flash
 from ui.sidebar import SECTIONS_ADMIN, render_sidebar
 from ui.topnav import configurer_page, render_topnav
-from ui.users_cache import ensure_username_index_once
 
 configurer_page("Espace Admin")
 
@@ -344,7 +343,7 @@ def render_accounts(users) -> None:
 # Mise en page
 # ---------------------------------------------------------------------------
 
-ensure_username_index_once()
+# L'index unique sur username est créé par get_users_collection (une fois par processus)
 users_collection = get_users_collection()
 
 st.title("Comptes utilisateurs")

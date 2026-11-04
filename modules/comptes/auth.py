@@ -55,7 +55,13 @@ def authenticate_with_role(username: str, password: str, expected_role: str) -> 
 
 
 def login_user(user: dict) -> None:
-    """Enregistre l'utilisateur connecté dans la session Streamlit."""
+    """
+    Enregistre l'utilisateur connecté dans la session Streamlit.
+
+    La session est d'abord vidée : si quelqu'un se connecte sans s'être
+    déconnecté avant, rien ne reste de la session précédente.
+    """
+    st.session_state.clear()
     st.session_state["logged_in"] = True
     st.session_state["username"] = user["username"]
     st.session_state["role"] = user["role"]
@@ -63,13 +69,13 @@ def login_user(user: dict) -> None:
 
 def logout_user() -> None:
     """
-    Déconnecte l'utilisateur courant (vide les infos de session).
+    Déconnecte l'utilisateur courant en vidant toute la session.
 
-    Efface aussi les données de la page admin (bilan d'import, récapitulatif
-    du dernier compte créé).
+    On vide tout, et pas seulement quelques clés : ainsi, aucune donnée des
+    pages (dataset choisi, import en cours, messages...) ne reste visible
+    pour la personne qui se connectera ensuite dans le même onglet.
     """
-    for key in ("logged_in", "username", "role", "import_result", "ajout_created"):
-        st.session_state.pop(key, None)
+    st.session_state.clear()
 
 
 def is_logged_in() -> bool:

@@ -15,22 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import bcrypt
-from pymongo.errors import DuplicateKeyError, PyMongoError
-
-
-def ensure_username_index(users) -> bool:
-    """
-    Crée un index unique sur username, pour que MongoDB refuse lui même
-    les doublons même en cas de clics simultanés.
-    Renvoie False si l'index n'a pas pu être créé (doublons déjà présents
-    en base, par exemple) : l'application continue de fonctionner avec
-    ses vérifications habituelles.
-    """
-    try:
-        users.create_index("username", unique=True)
-        return True
-    except PyMongoError:
-        return False
+from pymongo.errors import DuplicateKeyError
 
 
 def hash_password(password: str) -> str:
