@@ -22,10 +22,19 @@ Un split est considéré comme patché pour un format quand le CSV à 100 %
 existe dans csv_for_dataloader/{split}/{format}/ : c'est le dernier fichier
 écrit (voir generer_csv_dataloader). Il n'y a pas de fiche de préparation.
 
+Les formats de patches viennent d'un catalogue (fichier config.yaml). Le
+lancement choisit quels formats patcher : plusieurs formats peuvent être
+patchés en un seul lancement, et chaque cube n'est alors lu qu'une fois.
+Un split déjà patché pour un format est ignoré (il n'est pas refait).
+
 Exemple de lancement :
 
-    python data_utils.py --dataset /chemin/Avoine1 --splits train test \
-        --n-lines 100 --patch-size 100 --stride-lines 100 --stride-cols 80
+    python data_utils.py --dataset /chemin/Avoine1 --config config.yaml \
+        --splits train test --formats w100_h100_sl50_sc50 w200_h200_sl100_sc100
+
+Sans --formats, tous les formats du catalogue sont patchés. L'option
+--full-width remplace h et sc par la largeur des cubes, pour tous les
+formats choisis.
 """
 
 import argparse
@@ -42,6 +51,7 @@ import numpy as np
 import pandas as pd
 import spectral.io.envi as envi
 import torch
+import yaml
 from torchvision.io import read_image
 
 # ---------------------------------------------------------------------------
@@ -49,7 +59,7 @@ from torchvision.io import read_image
 # ---------------------------------------------------------------------------
 
 # Dossier des patches, à l'intérieur du dataset
-NOM_DOSSIER_PATCHING = "hsi-data-patching"
+NOM_DOSSIER_PATCHING = "hsi_data_patching"
 
 # Splits, écrits en minuscules sur le disque (l'interface affiche Train, Test, Val)
 SPLITS = ["train", "test", "val"]
@@ -98,6 +108,80 @@ def chemin_format(racine, modalite, sous_dossier, split, format_name) -> str:
     contenu (patches, before_csv, csv_for_dataloader) et un split.
     """
     return os.path.join(racine, modalite, sous_dossier, nom_split(split), format_name)
+
+
+def deja_patche(racine, split, format_name) -> bool:
+    """
+    Indique si un split est déjà patché pour un format : le CSV à 100 % de HSI
+    existe (c'est le dernier fichier écrit, voir generer_csv_dataloader).
+    """
+    nom_fichier = f"100%_{nom_split(split)}_{format_name}.csv"
+    dossier = chemin_format(racine, "HSI", "csv_for_dataloader", split, format_name)
+    return os.path.exists(os.path.join(dossier, nom_fichier))
+
+
+# ---------------------------------------------------------------------------
+# Catalogue des formats (fichier config.yaml)
+# ---------------------------------------------------------------------------
+
+
+def charger_catalogue(chemin_config):
+    """
+    Lit le catalogue des formats dans le fichier YAML.
+
+    Renvoie un dictionnaire {nom du format: paramètres}. Le nom est celui du
+    format sans largeur complète (par exemple w100_h100_sl50_sc50) : c'est lui
+    qui est donné à l'option --formats.
+    """
+    with open(chemin_config, encoding="utf-8") as fichier:
+        config = yaml.safe_load(fichier)
+
+    catalogue = {}
+    for fmt in config["patch_formats"]:
+        nom = nom_format(
+            fmt["n_lines"], fmt["patch_size"], fmt["stride_lines"], fmt["stride_cols"]
+        )
+        catalogue[nom] = {
+            "n_lines": fmt["n_lines"],
+            "patch_size": fmt["patch_size"],
+            "stride_lines": fmt["stride_lines"],
+            "stride_cols": fmt["stride_cols"],
+            "full_width": fmt.get("full_width", False),
+        }
+    return catalogue
+
+
+def choisir_formats(catalogue, noms, largeur_complete):
+    """
+    Renvoie les paramètres des formats choisis, dans l'ordre demandé.
+
+    Avec `largeur_complete`, tous les formats choisis passent en largeur
+    complète. Lève ValueError si un nom n'est pas dans le catalogue.
+    """
+    formats = []
+    for nom in noms:
+        if nom not in catalogue:
+            raise ValueError(f"Format inconnu : {nom} (absent du catalogue)")
+        parametres = dict(catalogue[nom])
+        if largeur_complete:
+            parametres["full_width"] = True
+        formats.append(parametres)
+    return formats
+
+
+def nom_dossier(parametres, largeur=None) -> str:
+    """
+    Renvoie le nom du dossier d'un format sur le disque.
+
+    En largeur complète, le nom contient la largeur des cubes à la place de
+    patch_size et de stride_cols.
+    """
+    if parametres["full_width"]:
+        return nom_format(parametres["n_lines"], largeur, parametres["stride_lines"], largeur)
+    return nom_format(
+        parametres["n_lines"], parametres["patch_size"],
+        parametres["stride_lines"], parametres["stride_cols"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -442,47 +526,49 @@ def generer_csv_dataloader(racine, split, format_name):
 # ---------------------------------------------------------------------------
 
 
-def patcher_cube(chemin_dataset, split, nom_cube, parametres, format_name):
+def patcher_cube(chemin_dataset, split, nom_cube, formats):
     """
-    Découpe un cube (HSI et RGB) en patches et les enregistre.
+    Découpe un cube (HSI et RGB) en patches, pour chaque format demandé.
 
-    `parametres` : dictionnaire avec n_lines, patch_size, stride_lines,
-    stride_cols et full_width (patch_size et stride_cols valent None en
-    largeur complète).
+    `formats` : liste de couples (nom du dossier, paramètres). Les paramètres
+    sont un dictionnaire avec n_lines, patch_size, stride_lines, stride_cols
+    et full_width.
 
-    Renvoie le nombre de patches créés (0 si la fenêtre est plus grande
-    que le cube : le cube est alors ignoré).
+    Le cube, la photo RGB et le masque ne sont lus qu'une seule fois, quel
+    que soit le nombre de formats. Si la fenêtre d'un format est plus grande
+    que le cube, ce format est ignoré pour ce cube.
     """
     racine = chemin_patching(chemin_dataset)
     chemins = chemins_cube(chemin_dataset, split, nom_cube)
-    full_width = parametres["full_width"]
 
+    # Lecture unique des fichiers du cube
     cube, _ = get_cube(chemins["hdr"])
     cube = torch.tensor(cube, dtype=torch.float32)  # (H, W, C)
     hauteur, largeur = cube.shape[0], cube.shape[1]
-
-    # Cube plus petit que la fenêtre : aucun patch possible
-    taille = largeur if full_width else parametres["patch_size"]
-    if hauteur < parametres["n_lines"] or largeur < taille:
-        print(f"Cube {nom_cube} ignoré : plus petit que la fenêtre", flush=True)
-        return 0
-
     rgb = read_image(chemins["rgb"])
     mask = read_image(chemins["masque"])[0]  # (H, W), un seul canal
 
-    options = {
-        "n_lines": parametres["n_lines"],
-        "patch_size": parametres["patch_size"],
-        "stride_lines": parametres["stride_lines"],
-        "stride_cols": parametres["stride_cols"],
-        "full_width": full_width,
-    }
-    patches_hsi, labels_hsi = extract_patches_HSI(cube, mask=mask, **options)
-    patches_rgb, labels_rgb = extract_patches_RGB(rgb, mask=mask, **options)
+    for format_name, parametres in formats:
+        full_width = parametres["full_width"]
 
-    sauvegarder_patches(patches_hsi, labels_hsi, racine, "HSI", split, format_name, nom_cube)
-    sauvegarder_patches(patches_rgb, labels_rgb, racine, "RGB", split, format_name, nom_cube)
-    return len(labels_hsi)
+        # Cube plus petit que la fenêtre : aucun patch possible pour ce format
+        taille = largeur if full_width else parametres["patch_size"]
+        if hauteur < parametres["n_lines"] or largeur < taille:
+            print(f"Cube {nom_cube} ignoré au format {format_name} : plus petit que la fenêtre", flush=True)
+            continue
+
+        options = {
+            "n_lines": parametres["n_lines"],
+            "patch_size": parametres["patch_size"],
+            "stride_lines": parametres["stride_lines"],
+            "stride_cols": parametres["stride_cols"],
+            "full_width": full_width,
+        }
+        patches_hsi, labels_hsi = extract_patches_HSI(cube, mask=mask, **options)
+        patches_rgb, labels_rgb = extract_patches_RGB(rgb, mask=mask, **options)
+
+        sauvegarder_patches(patches_hsi, labels_hsi, racine, "HSI", split, format_name, nom_cube)
+        sauvegarder_patches(patches_rgb, labels_rgb, racine, "RGB", split, format_name, nom_cube)
 
 
 def maintenant() -> str:
@@ -508,14 +594,18 @@ def ecrire_suivi(fichier_suivi, suivi):
     os.replace(temporaire, fichier_suivi)
 
 
-def patcher_dataset(chemin_dataset, splits, parametres, fichier_suivi=None):
+def patcher_dataset(chemin_dataset, splits, formats, fichier_suivi=None):
     """
-    Patche tous les cubes des splits choisis, au format demandé.
+    Patche tous les cubes des splits choisis, pour les formats demandés.
 
-    Pour chaque split : on repart de zéro, on patche chaque cube, puis on
-    génère les CSV du dataloader. L'avancement est écrit dans `fichier_suivi`
-    (état : en cours, termine ou erreur). Toute erreur est inscrite dans ce
-    fichier puis relancée.
+    `formats` : liste de dictionnaires de paramètres (voir choisir_formats).
+
+    Pour chaque split : on repart de zéro pour chaque format à faire, on
+    patche chaque cube (une seule lecture pour tous les formats), puis on
+    génère les CSV du dataloader. Un split déjà patché pour un format est
+    ignoré. L'avancement est écrit dans `fichier_suivi` (état : en cours,
+    termine ou erreur) : il compte les cubes, tous formats confondus. Toute
+    erreur est inscrite dans ce fichier puis relancée.
     """
     suivi = {
         "etat": "en cours",
@@ -539,41 +629,54 @@ def patcher_dataset(chemin_dataset, splits, parametres, fichier_suivi=None):
         if total == 0:
             raise ValueError("Aucun cube trouvé dans les splits choisis")
 
-        # Nom du format : en largeur complète, il contient la largeur des cubes
-        if parametres["full_width"]:
+        # Noms des dossiers : en largeur complète, ils contiennent la largeur des cubes
+        largeur = None
+        if any(parametres["full_width"] for parametres in formats):
             largeur = largeur_commune(chemin_dataset, cubes_par_split)
-            format_name = nom_format(
-                parametres["n_lines"], largeur, parametres["stride_lines"], largeur
-            )
-        else:
-            format_name = nom_format(
-                parametres["n_lines"], parametres["patch_size"],
-                parametres["stride_lines"], parametres["stride_cols"],
-            )
+        noms = [nom_dossier(parametres, largeur) for parametres in formats]
 
-        suivi["format"] = format_name
+        # Pour chaque split, les formats à faire (ceux qui ne sont pas déjà patchés)
+        plan = {}
+        for split in splits:
+            a_faire = [
+                (nom, parametres) for nom, parametres in zip(noms, formats)
+                if not deja_patche(racine, split, nom)
+            ]
+            if a_faire:
+                plan[split] = a_faire
+
+        # Le total ne compte que les cubes qui seront réellement patchés
+        total = sum(len(cubes_par_split[split]) for split in plan)
+        if total == 0:
+            raise ValueError("Tous les formats choisis sont déjà patchés pour ces splits")
+
+        suivi["format"] = ", ".join(noms)
         suivi["cubes_total"] = total
         ecrire_suivi(fichier_suivi, suivi)
 
-        for split in splits:
-            nettoyer_split_format(racine, split, format_name)
+        for split, a_faire in plan.items():
+            # Chaque format à faire repart de zéro
+            for nom, _ in a_faire:
+                nettoyer_split_format(racine, split, nom)
+
             for nom_cube in cubes_par_split[split]:
                 suivi["cube_courant"] = f"{nom_cube} ({split})"
                 ecrire_suivi(fichier_suivi, suivi)
                 print(f"Patching de {nom_cube} (split {split})", flush=True)
 
-                patcher_cube(chemin_dataset, split, nom_cube, parametres, format_name)
+                patcher_cube(chemin_dataset, split, nom_cube, a_faire)
 
                 suivi["cubes_faits"] += 1
                 ecrire_suivi(fichier_suivi, suivi)
 
-            # Dernière étape du split : après elle, le split est patché
-            generer_csv_dataloader(racine, split, format_name)
+            # Dernière étape du split : après elle, le split est patché pour ces formats
+            for nom, _ in a_faire:
+                generer_csv_dataloader(racine, split, nom)
             print(f"Split {split} terminé", flush=True)
 
         suivi["etat"] = "termine"
         suivi["cube_courant"] = ""
-        suivi["message"] = f"{total} cube(s) traité(s), format {format_name}"
+        suivi["message"] = f"{total} cube(s) traité(s), format(s) {', '.join(noms)}"
         suivi["fin"] = maintenant()
         ecrire_suivi(fichier_suivi, suivi)
 
@@ -594,33 +697,28 @@ def lire_arguments():
     """Lit les arguments de la ligne de commande."""
     parseur = argparse.ArgumentParser(description="Patching des cubes HSI d'un dataset")
     parseur.add_argument("--dataset", required=True, help="Chemin du dataset sur le serveur")
+    parseur.add_argument("--config", required=True, help="Fichier YAML du catalogue des formats")
     parseur.add_argument("--splits", nargs="+", default=SPLITS, help="Splits à patcher (train test val)")
-    parseur.add_argument("--n-lines", type=int, required=True, help="Nombre de lignes d'un patch")
-    parseur.add_argument("--patch-size", type=int, help="Taille d'un patch en colonnes")
-    parseur.add_argument("--stride-lines", type=int, required=True, help="Pas en lignes")
-    parseur.add_argument("--stride-cols", type=int, help="Pas en colonnes")
-    parseur.add_argument("--full-width", action="store_true", help="Patches sur toute la largeur du cube")
+    parseur.add_argument(
+        "--formats", nargs="+",
+        help="Noms des formats à patcher, ex : w100_h100_sl50_sc50 (par défaut : tout le catalogue)",
+    )
+    parseur.add_argument(
+        "--full-width", action="store_true",
+        help="Patches sur toute la largeur du cube, pour tous les formats choisis",
+    )
     parseur.add_argument("--suivi", help="Fichier JSON où écrire l'avancement")
-    arguments = parseur.parse_args()
-
-    # Sans largeur complète, la taille et le pas en colonnes sont obligatoires
-    if not arguments.full_width and (arguments.patch_size is None or arguments.stride_cols is None):
-        parseur.error("--patch-size et --stride-cols sont obligatoires sans --full-width")
-    return arguments
+    return parseur.parse_args()
 
 
 def main():
     """Point d'entrée : lit les arguments puis lance le patching."""
     arguments = lire_arguments()
-    parametres = {
-        "n_lines": arguments.n_lines,
-        "patch_size": None if arguments.full_width else arguments.patch_size,
-        "stride_lines": arguments.stride_lines,
-        "stride_cols": None if arguments.full_width else arguments.stride_cols,
-        "full_width": arguments.full_width,
-    }
     try:
-        patcher_dataset(arguments.dataset, arguments.splits, parametres, arguments.suivi)
+        catalogue = charger_catalogue(arguments.config)
+        noms = arguments.formats or list(catalogue)
+        formats = choisir_formats(catalogue, noms, arguments.full_width)
+        patcher_dataset(arguments.dataset, arguments.splits, formats, arguments.suivi)
     except Exception:
         # L'erreur est déjà dans le fichier de suivi : on l'affiche aussi dans le log
         traceback.print_exc()

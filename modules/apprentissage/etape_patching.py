@@ -2,7 +2,7 @@
 modules/apprentissage/etape_patching.py
 
 Étape 2 de la page Apprentissage : patching. Cette étape permet de choisir
-une version de patches déjà préparée, ou de lancer un nouveau patching.
+une version de patches déjà préparée ou de lancer un nouveau patching.
 
 Les accès au serveur et les calculs sur les patches sont dans
 modules/versions_patching.py : ce fichier ne fait que préparer ce que la page affiche.
@@ -18,6 +18,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
 from modules.versions_patching import estimer_nb_patches, lister_versions, splits_non_patches
 
@@ -28,14 +30,9 @@ TOUS_LES_SPLITS_RESTANTS = "Tous les splits restants"
 # Split indispensable pour utiliser une version à l'entraînement
 SPLIT_ENTRAINEMENT = "Train"
 
-# Formats de patches proposés à l'utilisateur : {libellé: paramètres}
-# w = n_lines, h = patch_size, sl = stride_lines, sc = stride_cols
-FORMATS = {
-    "w1 h100 sl1 sc80": {"n_lines": 1, "patch_size": 100, "stride_lines": 1, "stride_cols": 80},
-    "w100 h100 sl50 sc50": {"n_lines": 100, "patch_size": 100, "stride_lines": 50, "stride_cols": 50},
-    "w200 h200 sl100 sc100": {"n_lines": 200, "patch_size": 200, "stride_lines": 100, "stride_cols": 100},
-    "w300 h300 sl200 sc200": {"n_lines": 300, "patch_size": 300, "stride_lines": 200, "stride_cols": 200},
-}
+# Catalogue fixe des formats de patches proposés à l'utilisateur. Le même
+# fichier est lu par data_utils.py au moment du patching.
+CONFIG_FORMATS = Path("config.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +169,89 @@ def splits_a_patcher(choix: str, restants: list) -> list:
     return [choix]
 
 
+def charger_formats() -> dict:
+    """
+    Lit le catalogue des formats dans config.yaml.
+
+    Renvoie {libellé: paramètres}, avec un libellé comme "w100 h100 sl50 sc50"
+    (w = n_lines, h = patch_size, sl = stride_lines, sc = stride_cols).
+    Lève FileNotFoundError si le fichier est absent, ValueError s'il est illisible.
+    """
+    try:
+        with open(CONFIG_FORMATS, encoding="utf-8") as fichier:
+            config = yaml.safe_load(fichier)
+        formats = {}
+        for fmt in config["patch_formats"]:
+            libelle = (
+                f"w{fmt['n_lines']} h{fmt['patch_size']} "
+                f"sl{fmt['stride_lines']} sc{fmt['stride_cols']}"
+            )
+            formats[libelle] = {
+                "n_lines": fmt["n_lines"],
+                "patch_size": fmt["patch_size"],
+                "stride_lines": fmt["stride_lines"],
+                "stride_cols": fmt["stride_cols"],
+            }
+    except (yaml.YAMLError, KeyError, TypeError) as erreur:
+        raise ValueError(f"Catalogue des formats illisible : {erreur}") from erreur
+    return formats
+
+
+def formats_choisis(catalogue: dict, libelles: list, full_width: bool, largeur=None) -> list:
+    """
+    Prépare les formats cochés par l'utilisateur.
+
+    Renvoie une liste de dictionnaires avec :
+      - "libelle" : texte affiché dans la liste de choix
+      - "nom_catalogue" : nom du format dans le catalogue, transmis au script
+      - "nom_dossier" : nom du dossier créé (il contient la largeur des cubes
+        en largeur complète)
+      - "parametres" : paramètres du format (voir construire_parametres)
+
+    La largeur complète est choisie une seule fois et s'applique à tous les formats.
+    """
+    choisis = []
+    for libelle in libelles:
+        fmt = catalogue[libelle]
+        n_lines, patch_size = fmt["n_lines"], fmt["patch_size"]
+        stride_lines, stride_cols = fmt["stride_lines"], fmt["stride_cols"]
+        choisis.append({
+            "libelle": libelle,
+            "nom_catalogue": nom_dossier_format(
+                n_lines, patch_size, stride_lines, stride_cols, False
+            ),
+            "nom_dossier": nom_dossier_format(
+                n_lines, patch_size, stride_lines, stride_cols, full_width, largeur
+            ),
+            "parametres": construire_parametres(
+                n_lines, patch_size, stride_lines, stride_cols, full_width
+            ),
+        })
+    return choisis
+
+
+def formats_a_patcher(versions: list, choisis: list) -> list:
+    """
+    Garde les formats qui ne sont pas encore entièrement patchés.
+
+    Un format déjà patché pour tous les splits n'est pas proposé une seconde fois.
+    """
+    return [f for f in choisis if splits_restants(versions, f["nom_dossier"])]
+
+
+def splits_restants_formats(versions: list, choisis: list) -> list:
+    """
+    Renvoie les splits à patcher pour au moins un des formats choisis, dans
+    l'ordre habituel (Train, Test, Val).
+
+    Le script ignore ensuite les splits déjà patchés pour un format donné.
+    """
+    restants = set()
+    for fmt in choisis:
+        restants.update(splits_restants(versions, fmt["nom_dossier"]))
+    return [s for s in SPLITS if s in restants]
+
+
 # ---------------------------------------------------------------------------
 # Dimensions des cubes, aperçu et lancement
 # ---------------------------------------------------------------------------
@@ -219,37 +299,52 @@ def largeur_commune(dimensions_dataset: dict):
     return largeurs.pop(), None
 
 
-def apercu_patching(dimensions_dataset: dict, splits: list, parametres: dict) -> dict:
+def apercu_patching(dimensions_dataset: dict, versions: list, formats: list, splits: list) -> dict:
     """
-    Estime le résultat du patching avant de le lancer.
+    Estime le résultat du patching avant de le lancer, pour les formats choisis.
 
-    Renvoie un dictionnaire avec :
-      - "nb_cubes" : nombre de cubes à patcher
+    Un split déjà patché pour un format n'est pas compté pour ce format (le
+    script l'ignore). Renvoie un dictionnaire avec :
+      - "nb_cubes" : nombre de cubes à patcher (chaque cube n'est lu qu'une
+        fois, même pour plusieurs formats)
       - "total_patches" : nombre total de patches estimés
-      - "patches_par_split" : nombre de patches estimés par split
+      - "patches_par_format" : nombre de patches estimés par format {libellé: nombre}
       - "illisibles" : nombre de cubes dont les dimensions sont illisibles
         (ils ne sont pas comptés dans l'estimation)
     """
-    nb_cubes = 0
-    illisibles = 0
-    patches_par_split = {}
+    # Splits réellement à faire pour chaque format
+    splits_par_format = {}
+    for fmt in formats:
+        restants = splits_restants(versions, fmt["nom_dossier"])
+        splits_par_format[fmt["libelle"]] = [s for s in splits if s in restants]
 
-    for split in splits:
-        cubes = dimensions_dataset.get(split, {})
-        total_split = 0
-        for dimensions in cubes.values():
-            estimation = estimer_nb_patches(dimensions, parametres)
-            if estimation is None:
-                illisibles += 1
-            else:
-                total_split += estimation
-        nb_cubes += len(cubes)
-        patches_par_split[split] = total_split
+    # Cubes : un cube est lu une seule fois s'il est utile à au moins un format
+    splits_utiles = [
+        s for s in splits if any(s in liste for liste in splits_par_format.values())
+    ]
+    nb_cubes = sum(len(dimensions_dataset.get(s, {})) for s in splits_utiles)
+    illisibles = sum(
+        1
+        for s in splits_utiles
+        for dimensions in dimensions_dataset.get(s, {}).values()
+        if dimensions is None
+    )
+
+    # Patches : estimation format par format
+    patches_par_format = {}
+    for fmt in formats:
+        total = 0
+        for split in splits_par_format[fmt["libelle"]]:
+            for dimensions in dimensions_dataset.get(split, {}).values():
+                estimation = estimer_nb_patches(dimensions, fmt["parametres"])
+                if estimation is not None:
+                    total += estimation
+        patches_par_format[fmt["libelle"]] = total
 
     return {
         "nb_cubes": nb_cubes,
-        "total_patches": sum(patches_par_split.values()),
-        "patches_par_split": patches_par_split,
+        "total_patches": sum(patches_par_format.values()),
+        "patches_par_format": patches_par_format,
         "illisibles": illisibles,
     }
 
@@ -339,30 +434,33 @@ def etat_job(chemin_dataset):
     return suivi
 
 
-def lancer_patching(chemin_dataset, splits: list, parametres: dict):
+def lancer_patching(chemin_dataset, splits: list, noms_formats: list, full_width: bool):
     """
     Lance data_utils.py en arrière-plan et rend la main immédiatement.
 
+    `noms_formats` : noms des formats choisis dans le catalogue (le script
+    retrouve leurs paramètres dans config.yaml). Plusieurs formats sont
+    patchés en un seul lancement.
+
     Le processus est détaché de l'application (nouvelle session) : il
     continue si la page est rechargée ou fermée. Sa sortie va dans le journal.
+
+    Pour l'instant le script tourne sur la même machine que l'application, donc
+    config.yaml est lu directement. Sur le serveur, il faudra copier ce fichier
+    avant le lancement.
     """
     DOSSIER_SUIVI.mkdir(parents=True, exist_ok=True)
 
     commande = [
         PYTHON_PATCHING, str(SCRIPT_PATCHING),
         "--dataset", str(chemin_dataset),
+        "--config", str(CONFIG_FORMATS),
         "--splits", *[s.lower() for s in splits],
-        "--n-lines", str(parametres["n_lines"]),
-        "--stride-lines", str(parametres["stride_lines"]),
+        "--formats", *noms_formats,
         "--suivi", str(chemin_suivi(chemin_dataset)),
     ]
-    if parametres["full_width"]:
+    if full_width:
         commande.append("--full-width")
-    else:
-        commande += [
-            "--patch-size", str(parametres["patch_size"]),
-            "--stride-cols", str(parametres["stride_cols"]),
-        ]
 
     # Le journal reçoit la sortie normale et les erreurs du script
     with open(chemin_journal(chemin_dataset), "w", encoding="utf-8") as journal:

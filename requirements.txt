@@ -12,3 +12,4 @@ uvicorn
 psutil
 requests
 paramiko
+pyyaml

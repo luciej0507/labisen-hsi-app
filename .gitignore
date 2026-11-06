@@ -18,3 +18,6 @@ htmlcov/
 
 # Fichiers générés par les outils de suivi de patching
 suivi_patching/
+
+example_config.yaml
+backup_scripts_serveur/

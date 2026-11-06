@@ -1,0 +1,14 @@
+# Catalogue fixe des formats de patches proposés à l'utilisateur.
+#
+# n_lines      : nombre de lignes d'un patch (w)
+# patch_size   : taille d'un patch en colonnes (h)
+# stride_lines : pas en lignes (sl)
+# stride_cols  : pas en colonnes (sc)
+# full_width   : laissé à false dans le catalogue. La largeur complète se
+#                choisit au lancement (toggle du formulaire, ou option
+#                --full-width du script) et s'applique à tous les formats choisis.
+patch_formats:
+  - {n_lines: 1,   patch_size: 100, stride_lines: 1,   stride_cols: 80,  full_width: false}
+  - {n_lines: 100, patch_size: 100, stride_lines: 50,  stride_cols: 50,  full_width: false}
+  - {n_lines: 200, patch_size: 200, stride_lines: 100, stride_cols: 100, full_width: false}
+  - {n_lines: 300, patch_size: 300, stride_lines: 200, stride_cols: 200, full_width: false}

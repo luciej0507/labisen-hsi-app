@@ -9,26 +9,26 @@ import pandas as pd
 import streamlit as st
 
 from modules.apprentissage.etape_patching import (
-    FORMATS,
     annuler_patching,
     apercu_patching,
+    charger_formats,
     chemin_journal,
-    construire_parametres,
     effacer_suivi,
     etat_job,
+    formats_a_patcher,
+    formats_choisis,
     lancer_patching,
     largeur_commune,
     libelles_versions,
     lignes_versions,
-    nom_dossier_format,
     options_split_source,
     splits_a_patcher,
     splits_deja_patches,
-    splits_restants,
+    splits_restants_formats,
     trouver_version,
     version_utilisable,
 )
-from modules.apprentissage.formats import formater_nombre, formater_splits
+from modules.apprentissage.formats import formater_nombre
 from ui.apprentissage import etat
 from ui.apprentissage.cache import dimensions_du_dataset, versions_du_dataset
 
@@ -104,34 +104,38 @@ def section_versions_existantes(versions):
 
 
 def section_nouveau_patching(chemin_dataset, versions, job_actif):
-    """Permet de lancer un patching : format, splits restants, aperçu, lancement.
+    """Permet de lancer un patching : formats, splits restants, aperçu, lancement.
 
-    `job_actif` vaut True si un patching tourne déjà pour ce dataset : le
-    bouton de lancement est alors désactivé.
+    Plusieurs formats peuvent être choisis : ils sont patchés en un seul
+    lancement. `job_actif` vaut True si un patching tourne déjà pour ce
+    dataset : le bouton de lancement est alors désactivé.
     """
     # Repliée quand des versions existent déjà, dépliée sinon
     with st.expander("Nouveau patching", expanded=not versions):
-        # Format des patches : un choix parmi les formats fixes
-        choix_format = st.radio("Format des patches", list(FORMATS), horizontal=True)
+        # Catalogue des formats, lu dans config.yaml
+        try:
+            catalogue = charger_formats()
+        except (OSError, ValueError) as erreur:
+            st.error(f"Impossible de lire le catalogue des formats : {erreur}")
+            return
+
+        # Un ou plusieurs formats parmi ceux du catalogue
+        libelles = st.multiselect("Formats des patches", list(catalogue))
         full_width = st.toggle("Largeur complète (full_width)", value=False)
         if full_width:
             st.caption(
                 "En largeur complète, h et sc sont remplacés par la largeur des cubes. "
-                "Seuls w et sl du format choisi sont utilisés."
+                "Seuls w et sl de chaque format choisi sont utilisés."
             )
-
-        # Paramètres du format choisi
-        format_choisi = FORMATS[choix_format]
-        n_lines = format_choisi["n_lines"]
-        patch_size = format_choisi["patch_size"]
-        stride_lines = format_choisi["stride_lines"]
-        stride_cols = format_choisi["stride_cols"]
+        if not libelles:
+            st.info("Choisissez au moins un format de patches.")
+            return
 
         # Dimensions de tous les cubes, lues une seule fois pour le dataset
         with st.spinner("Lecture des dimensions des cubes..."):
             dimensions = dimensions_du_dataset(chemin_dataset)
 
-        # En largeur complète, le nom du format contient la largeur des cubes
+        # En largeur complète, le nom des dossiers contient la largeur des cubes
         largeur = None
         if full_width:
             largeur, probleme = largeur_commune(dimensions)
@@ -139,27 +143,27 @@ def section_nouveau_patching(chemin_dataset, versions, job_actif):
                 st.warning(probleme)
                 return
 
-        parametres = construire_parametres(
-            n_lines, patch_size, stride_lines, stride_cols, full_width
-        )
-        nom_dossier = nom_dossier_format(
-            n_lines, patch_size, stride_lines, stride_cols, full_width, largeur
-        )
-        st.write("Nom du dossier généré :")
-        st.code(nom_dossier, language=None)
+        choisis = formats_choisis(catalogue, libelles, full_width, largeur)
+        st.write("Dossiers générés :")
+        st.code("\n".join(f["nom_dossier"] for f in choisis), language=None)
 
-        # Un format déjà patché n'est pas proposé une seconde fois
-        restants = splits_restants(versions, nom_dossier)
-        if not restants:
+        # Un format déjà entièrement patché n'est pas proposé une seconde fois
+        a_patcher = formats_a_patcher(versions, choisis)
+        ignores = [f["nom_dossier"] for f in choisis if f not in a_patcher]
+        if ignores:
             st.info(
-                "Ce format est déjà entièrement patché pour ce dataset. "
-                "Il figure dans les formats de patches disponibles ci-dessus."
+                f"Déjà entièrement patchés (ignorés) : {', '.join(ignores)}. "
+                "Ils figurent dans les formats de patches disponibles ci-dessus."
             )
+        if not a_patcher:
             return
+
+        # Splits restants : ceux à patcher pour au moins un des formats
+        restants = splits_restants_formats(versions, a_patcher)
         deja = splits_deja_patches(restants)
         if deja:
             st.info(
-                f"Déjà patchés pour ce format : {', '.join(deja)}. "
+                f"Déjà patchés pour tous les formats choisis : {', '.join(deja)}. "
                 "Seuls les splits restants sont proposés."
             )
 
@@ -169,13 +173,13 @@ def section_nouveau_patching(chemin_dataset, versions, job_actif):
         )
         splits = splits_a_patcher(choix_split, restants)
 
-        apercu = section_apercu(dimensions, splits, parametres)
-        section_lancement(chemin_dataset, splits, parametres, nom_dossier, apercu, job_actif)
+        apercu = section_apercu(dimensions, versions, a_patcher, splits)
+        section_lancement(chemin_dataset, splits, a_patcher, full_width, apercu, job_actif)
 
 
-def section_apercu(dimensions, splits, parametres):
+def section_apercu(dimensions, versions, formats, splits):
     """Affiche le nombre de cubes et de patches estimés. Retourne l'aperçu."""
-    apercu = apercu_patching(dimensions, splits, parametres)
+    apercu = apercu_patching(dimensions, versions, formats, splits)
 
     col1, col2 = st.columns(2)
     col1.metric("Cubes à patcher", apercu["nb_cubes"])
@@ -184,7 +188,13 @@ def section_apercu(dimensions, splits, parametres):
     if apercu["nb_cubes"] == 0:
         st.info("Aucun cube trouvé dans le ou les splits choisis (ou serveur injoignable).")
     else:
-        st.caption("Par split : " + formater_splits(apercu["patches_par_split"]))
+        st.caption(
+            "Par format : "
+            + ", ".join(
+                f"{libelle} ({formater_nombre(nombre)})"
+                for libelle, nombre in apercu["patches_par_format"].items()
+            )
+        )
     if apercu["illisibles"]:
         st.warning(
             f"{apercu['illisibles']} cube(s) aux dimensions illisibles : "
@@ -237,7 +247,7 @@ def fragment_suivi(chemin_dataset):
     fraction = faits / total if total else 0.0
     texte = f"{faits}/{total} cubes" if total else "Préparation en cours..."
 
-    st.markdown(f"Format : **{suivi['format'] or '...'}**")
+    st.markdown(f"Format(s) : **{suivi['format'] or '...'}**")
     st.progress(fraction, text=texte)
     if suivi["cube_courant"]:
         st.caption(f"Cube en cours : {suivi['cube_courant']}")
@@ -278,8 +288,12 @@ def section_suivi(chemin_dataset):
     return False
 
 
-def section_lancement(chemin_dataset, splits, parametres, nom_dossier, apercu, job_actif):
-    """Lance le patching en arrière-plan : la page reste utilisable."""
+def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_actif):
+    """Lance le patching en arrière-plan : la page reste utilisable.
+
+    `formats` : formats à patcher (voir formats_choisis). Le script reçoit
+    leurs noms dans le catalogue et retrouve les paramètres dans config.yaml.
+    """
     if job_actif:
         st.info(
             "Un patching est déjà en cours pour ce dataset : "
@@ -295,14 +309,16 @@ def section_lancement(chemin_dataset, splits, parametres, nom_dossier, apercu, j
         return
 
     try:
-        lancer_patching(chemin_dataset, splits, parametres)
+        noms_formats = [f["nom_catalogue"] for f in formats]
+        lancer_patching(chemin_dataset, splits, noms_formats, full_width)
     except OSError as erreur:
         st.error(f"Impossible de lancer le patching : {erreur}")
         return
 
+    noms_dossiers = ", ".join(f["nom_dossier"] for f in formats)
     st.session_state[etat.CONFIRMER_ANNULATION] = False
     st.session_state[etat.MESSAGE] = (
-        f"Patching lancé en arrière-plan, format {nom_dossier}. "
+        f"Patching lancé en arrière-plan, format(s) {noms_dossiers}. "
         "Suivez son avancement en haut de l'étape."
     )
     st.rerun()
