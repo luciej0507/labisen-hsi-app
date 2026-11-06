@@ -5,7 +5,7 @@ Lecture des versions préparées (patches) d'un dataset, et calculs liés au
 patching des cubes HSI.
 
 Les patches sont rangés dans le dataset lui-même, dans le dossier
-hsi-data-patching (voir scripts_serveur/data_utils.py) :
+hsi_data_patching (voir scripts_serveur/data_utils.py) :
 
     <dataset>/hsi-data-patching/HSI/csv_for_dataloader/{train,test,val}/{format}/
 

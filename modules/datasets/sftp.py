@@ -9,6 +9,11 @@ par tous les appels (voir obtenir_sftp), au lieu d'en ouvrir une nouvelle à
 chaque fois. Comme l'application tourne en continu dans un même processus,
 cette connexion reste valable d'un rechargement de page à l'autre.
 
+Mode local : avec MODE_LOCAL=1 dans le .env, obtenir_sftp renvoie un faux
+client (ClientLocal) qui lit et écrit directement sur le disque de
+l'ordinateur. Aucune connexion au serveur n'est alors tentée, et les autres
+modules n'ont rien à changer.
+
 Ce module est le seul à connaître les paramètres de connexion : les autres
 modules du package passent par obtenir_sftp.
 
@@ -16,8 +21,10 @@ Ce module n'importe jamais Streamlit.
 """
 
 import os
+import shutil
 import socket
 import time
+from types import SimpleNamespace
 
 import paramiko
 from dotenv import load_dotenv
@@ -31,7 +38,11 @@ SFTP_PORT = int(os.getenv("SFTP_PORT", "22"))
 SFTP_USERNAME = os.getenv("SFTP_USERNAME")
 SFTP_PASSWORD = os.getenv("SFTP_PASSWORD")
 
-# Chemin du dossier contenant les datasets sur le serveur distant
+# Mode local : MODE_LOCAL=1 dans le .env pour travailler sans le serveur
+MODE_LOCAL = os.getenv("MODE_LOCAL", "0") == "1"
+
+# Chemin du dossier contenant les datasets (sur le serveur distant, ou sur
+# le disque local en mode local : dans ce cas, mettre un chemin ABSOLU)
 DATASETS_REMOTE_PATH = os.getenv(
     "DATASETS_REMOTE_PATH", "/mnt/lslteam/SIIRI/CodePythonSIIRI/"
 )
@@ -57,6 +68,63 @@ _connexion = {"sftp": None, "transport": None}
 _dernier_echec = {"heure": None}
 
 
+class ClientLocal:
+    """
+    Faux client SFTP qui travaille sur le disque local.
+
+    Il offre les mêmes méthodes que paramiko.SFTPClient pour celles
+    utilisées par le projet (listdir, listdir_attr, stat, open, mkdir,
+    putfo, remove, rmdir). Les erreurs sont des OSError, comme avec SFTP.
+    """
+
+    def listdir(self, chemin):
+        """Renvoie les noms contenus dans un dossier."""
+        return os.listdir(chemin)
+
+    def listdir_attr(self, chemin):
+        """Renvoie, pour chaque élément, son nom, son mode et sa date."""
+        elements = []
+        for nom in os.listdir(chemin):
+            infos = os.stat(os.path.join(chemin, nom))
+            elements.append(
+                SimpleNamespace(
+                    filename=nom,
+                    st_mode=infos.st_mode,
+                    st_mtime=infos.st_mtime,
+                )
+            )
+        return elements
+
+    def stat(self, chemin):
+        """Renvoie les infos d'un fichier (st_mode, st_mtime...)."""
+        return os.stat(chemin)
+
+    def open(self, chemin, mode="r"):
+        """Ouvre un fichier en lecture binaire (comme paramiko en mode "r")."""
+        return open(chemin, "rb")
+
+    def mkdir(self, chemin):
+        """Crée un dossier."""
+        os.mkdir(chemin)
+
+    def putfo(self, source, cible):
+        """Copie le contenu d'un fichier ouvert vers `cible`."""
+        with open(cible, "wb") as destination:
+            shutil.copyfileobj(source, destination)
+
+    def remove(self, chemin):
+        """Supprime un fichier."""
+        os.remove(chemin)
+
+    def rmdir(self, chemin):
+        """Supprime un dossier vide."""
+        os.rmdir(chemin)
+
+
+# Un seul faux client suffit : il n'a pas d'état
+_client_local = ClientLocal()
+
+
 def _connexion_active() -> bool:
     """Indique si la connexion partagée existe et semble toujours active."""
     transport = _connexion["transport"]
@@ -67,9 +135,13 @@ def obtenir_sftp():
     """
     Renvoie un client SFTP déjà connecté au serveur.
 
-    Réutilise la connexion partagée si elle est toujours active. Sinon
-    (premier appel, ou connexion coupée depuis), une nouvelle connexion est
-    ouverte et devient la connexion partagée pour les appels suivants.
+    En mode local (MODE_LOCAL=1), renvoie le faux client qui travaille sur
+    le disque, sans aucune connexion réseau.
+
+    Sinon, réutilise la connexion partagée si elle est toujours active. Si
+    elle ne l'est pas (premier appel, ou connexion coupée depuis), une
+    nouvelle connexion est ouverte et devient la connexion partagée pour les
+    appels suivants.
 
     Si la dernière tentative a échoué il y a moins de DELAI_NOUVELLE_TENTATIVE
     secondes, aucune nouvelle tentative n'est faite : l'erreur est levée
@@ -77,6 +149,10 @@ def obtenir_sftp():
 
     Peut lever paramiko.SSHException ou OSError si la connexion échoue.
     """
+    # Mode local : pas de serveur, on travaille directement sur le disque
+    if MODE_LOCAL:
+        return _client_local
+
     if not _connexion_active():
         # Échec récent : on abandonne immédiatement
         heure = _dernier_echec["heure"]
