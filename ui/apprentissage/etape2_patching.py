@@ -35,8 +35,17 @@ from ui.apprentissage.cache import dimensions_du_dataset, versions_du_dataset
 # Intervalle (en secondes) de rafraîchissement de l'avancement du patching
 DELAI_SUIVI = 2
 
-# Image qui explique les formats de patches, chemin relatif à la racine du projet
+# Images qui expliquent les formats et l'option full_width, chemins relatifs à la racine du projet
 IMAGE_FORMATS = Path("assets/formats_patches.png")
+IMAGE_FULL_WIDTH = Path("assets/option_full_width.png")
+
+
+def afficher_image(chemin):
+    """Affiche une image du dossier assets, ou un message si elle est absente."""
+    if chemin.exists():
+        st.image(str(chemin), width="stretch")
+    else:
+        st.caption("Illustration indisponible.")
 
 
 def expander_formats():
@@ -46,11 +55,23 @@ def expander_formats():
             "Illustration sur un cube de 900 x 1000 pixels avec 300 bandes spectrales : "
             "les dimensions de vos cubes peuvent être différentes, mais le principe reste le même."
         )
-        # L'image est lue dans le dossier assets de la racine du projet
-        if IMAGE_FORMATS.exists():
-            st.image(str(IMAGE_FORMATS), width="stretch")
-        else:
-            st.caption("Illustration indisponible.")
+        afficher_image(IMAGE_FORMATS)
+
+
+def expander_full_width():
+    """Affiche le menu déroulant (replié) qui explique l'option full_width."""
+    with st.expander("Comprendre l'option full_width"):
+        st.caption(
+            "En largeur complète, h et sc sont remplacés par la largeur des cubes. "
+            "Seuls w et sl de chaque format choisi sont utilisés."
+        )
+        afficher_image(IMAGE_FULL_WIDTH)
+
+
+def expanders_explications():
+    """Affiche les deux menus déroulants d'explication, l'un sous l'autre."""
+    expander_formats()
+    expander_full_width()
 
 
 def section_versions_existantes(versions):
@@ -64,8 +85,8 @@ def section_versions_existantes(versions):
             "Aucun format de patches disponible pour ce dataset. "
             "Lancez un nouveau patching ci-dessous."
         )
-        # L'explication des formats aide aussi à choisir celui à patcher
-        expander_formats()
+        # Les explications aident aussi à choisir le format et l'option à utiliser
+        expanders_explications()
         return
 
     st.markdown(f"**Récapitulatif des formats de patches disponibles ({len(versions)})**")
@@ -76,8 +97,8 @@ def section_versions_existantes(versions):
     )
     st.dataframe(pd.DataFrame(lignes_versions(versions)), hide_index=True, width="stretch")
 
-    # Explication des noms de formats, repliée par défaut
-    expander_formats()
+    # Explications des formats et de l'option full_width, repliées par défaut
+    expanders_explications()
 
     # Formats utilisables : le split Train doit être patché pour entraîner
     noms = list(libelles_versions(versions))
