@@ -6,7 +6,7 @@ Page encore vide : elle accueillera les alertes et le suivi d'activité.
 
 import streamlit as st
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from ui.sidebar import SECTIONS_ADMIN, render_sidebar
 from ui.topnav import configurer_page, render_topnav
 

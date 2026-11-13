@@ -15,3 +15,18 @@ __pycache__/
 *.pyc
 .coverage
 htmlcov/
+
+# Fichiers générés par les outils de suivi de patching
+suivi_patching/
+
+
+
+# fichiers et dossiers à ne pas commiter
+# copie du config.yaml du serveur
+example_config.yaml
+
+# copie des scripts pour patching + entrainement avec fastflow+mlflow
+backup_scripts_serveur/
+
+# copie d'un tout petit datatset en local (avoine_test_patching)
+data/

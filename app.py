@@ -7,7 +7,7 @@ il est affiché par défaut au lancement, avant tout autre onglet.
 
 import streamlit as st
 
-from modules.auth import is_logged_in
+from modules.comptes.auth import is_logged_in
 from ui.topnav import render_footer, configurer_page, render_topnav
 
 # Doit être le premier appel Streamlit de la page.

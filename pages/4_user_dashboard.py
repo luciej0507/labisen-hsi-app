@@ -6,7 +6,7 @@ Apprentissage) sont dans les pages 4a, 4b et 4c.
 
 import streamlit as st
 
-from modules.auth import require_role
+from modules.comptes.auth import require_role
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 

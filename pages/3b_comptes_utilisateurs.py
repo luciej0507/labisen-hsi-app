@@ -9,14 +9,16 @@ Cette page ne contient que de l'affichage Streamlit. La logique métier
 (validation, écriture en base) est dans modules/users.py.
 """
 
+import pandas as pd
 import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
-from modules.auth import require_role
-from modules.datasets import DATASETS_REMOTE_PATH, chemin_relatif
+from modules.comptes.auth import require_role
+from modules.datasets.exploration_dataset import chemin_relatif
+from modules.datasets.sftp import DATASETS_REMOTE_PATH
 from modules.db_mongo import get_users_collection
-from modules.user_import import ROLES
-from modules.users import (
+from modules.comptes.user_import import ROLES
+from modules.comptes.users import (
     delete_blocked_reason,
     delete_user,
     format_date,
@@ -30,7 +32,6 @@ from ui.arbre_datasets import afficher_arborescence_datasets, lire_selection
 from ui.flash import flash, render_flash
 from ui.sidebar import SECTIONS_ADMIN, render_sidebar
 from ui.topnav import configurer_page, render_topnav
-from ui.users_cache import ensure_username_index_once
 
 configurer_page("Espace Admin")
 
@@ -105,6 +106,19 @@ def dialog_delete_user(username: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Libellés de la colonne Statut
+STATUS_ACTIVE = "Actif"
+STATUS_PENDING = "Mot de passe à définir"
+
+# Couleurs de fond du tableau, semi-transparentes pour rester lisibles en
+# thème clair comme en thème sombre (mêmes couleurs que la page d'import).
+STATUS_BACKGROUNDS = {
+    STATUS_ACTIVE: "background-color: rgba(46, 160, 67, 0.25)",
+    STATUS_PENDING: "background-color: rgba(255, 165, 0, 0.25)",
+}
+EMPTY_BACKGROUND = "background-color: rgba(128, 128, 128, 0.15)"
+
+
 def render_accounts(users) -> None:
     """Tableau des comptes, puis détail du compte sélectionné."""
     render_flash("comptes")
@@ -131,18 +145,38 @@ def render_accounts(users) -> None:
                 "Identifiant": u.get("username", ""),
                 "Rôle": u.get("role", ""),
                 "Nb datasets": len(u.get("datasets_access", [])),
-                "Statut": "En attente de mot de passe" if is_password_pending(u) else "Actif",
+                "Statut": STATUS_PENDING if is_password_pending(u) else STATUS_ACTIVE,
                 "Créé le": format_date(u.get("created_at")),
             }
         )
 
     # Un clic sur une ligne sélectionne le compte. La clé du tableau change
     # après une suppression (voir dialog_delete_user) pour effacer la sélection.
+    # Mise en forme : cellules vides grisées (nom, prénom, email) et statut
+    # coloré. Le style ne change pas les données, donc la sélection d'une
+    # ligne fonctionne comme avant.
+    table = pd.DataFrame(rows)
+    styled_table = table.style.apply(
+        lambda colonne: [EMPTY_BACKGROUND if v == "" else "" for v in colonne],
+        subset=["Nom", "Prénom", "Email"],
+    ).apply(
+        lambda colonne: [STATUS_BACKGROUNDS.get(v, "") for v in colonne],
+        subset=["Statut"],
+    )
+
     evenement = st.dataframe(
-        rows,
+        styled_table,
         width="stretch",
         hide_index=True,
         placeholder="",
+        # Largeurs en pixels : étroites pour les colonnes qui contiennent peu
+        # d'information, pour laisser de la place au statut et à l'email.
+        column_config={
+            "Rôle": st.column_config.Column(width=80),
+            "Nb datasets": st.column_config.Column(width=110),
+            "Statut": st.column_config.Column(width=190),
+            "Créé le": st.column_config.Column(width=110),
+        },
         on_select="rerun",
         selection_mode="single-row",
         key=f"table_comptes_{st.session_state['comptes_table_id']}",
@@ -309,7 +343,7 @@ def render_accounts(users) -> None:
 # Mise en page
 # ---------------------------------------------------------------------------
 
-ensure_username_index_once()
+# L'index unique sur username est créé par get_users_collection (une fois par processus)
 users_collection = get_users_collection()
 
 st.title("Comptes utilisateurs")

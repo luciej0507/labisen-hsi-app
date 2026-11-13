@@ -16,3 +16,7 @@ backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F5F5F5"
 textColor = "#262730"
 font = "sans serif"
+
+# Augmentation de la limite par défaut d'un upload
+[server]
+maxUploadSize = 2000
