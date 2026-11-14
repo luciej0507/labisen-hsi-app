@@ -30,3 +30,10 @@ backup_scripts_serveur/
 
 # copie d'un tout petit datatset en local (avoine_test_patching)
 data/
+
+# dossier des entrainements mlflow
+entrainements/
+# ce dossier contient la base MLflow (mlflow.db), les artefacts (mlartifacts/, 
+# avec les modèles et checkpoints, qui peuvent peser plusieurs centaines de Mo), 
+# les journaux, run_en_cours.json et un dossier par run. 
+# Ils sont propres à chaque machine et ne doivent pas être partagés par git.
