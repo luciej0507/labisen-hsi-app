@@ -13,6 +13,7 @@ dump_mongo/
 __pycache__/
 *.pyc
 .coverage
+coverage.xml
 htmlcov/
 
 # Fichiers générés par les outils de suivi de patching
