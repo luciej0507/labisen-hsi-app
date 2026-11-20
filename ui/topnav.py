@@ -91,6 +91,20 @@ div[data-testid="stMainBlockContainer"] {
     text-decoration-thickness: 2px;
 }
 
+/* Accessibilité : le focus clavier doit toujours être visible (WCAG 2.4.7).
+   Contour rouge d'accent (contraste 5,9:1 sur fond blanc). */
+a:focus-visible, button:focus-visible, summary:focus-visible,
+input:focus-visible, [role="radio"]:focus-visible, [role="tab"]:focus-visible {
+    outline: 3px solid var(--accent) !important;
+    outline-offset: 2px !important;
+}
+
+/* Accessibilité : les légendes (st.caption) sont en gris par défaut, un peu
+   trop clair. Ce gris foncé a un contraste de 7:1 sur fond blanc. */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {
+    color: #595959;
+}
+
 /* Nom de l'utilisateur connecté, aligné à droite, à côté du bouton. */
 .st-key-entete [data-testid="stCaptionContainer"] { text-align: right; }
 

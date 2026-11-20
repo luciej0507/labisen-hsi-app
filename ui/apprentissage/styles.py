@@ -8,8 +8,9 @@ import streamlit as st
 
 from ui.apprentissage import etat
 
-# Couleurs des boutons de la frise pour une étape validée
-VERT = "#2e9e5b"
+# Couleurs des boutons de la frise pour une étape validée.
+# Le texte blanc sur ce vert a un contraste de 5,3:1 (WCAG AA : 4,5:1 minimum).
+VERT = "#207a46"
 VERT_FONCE = "#1b6b3a"
 
 # Style des cartes du choix de dataset (couleurs semi-transparentes pour les
@@ -36,14 +37,15 @@ div[class*="st-key-entete-green-"] {
 </style>
 """
 
-# Teinte de chaque bloc du paramétrage : (composantes RVB, couleur du titre).
-# Les couleurs de fond sont semi-transparentes pour les thèmes clair et sombre.
+# Teinte de chaque bloc du paramétrage : (composantes RVB du cadre, couleur du
+# titre). Les couleurs des titres ont un contraste d'au moins 4,5:1 sur fond
+# blanc, comme le demande le niveau AA des WCAG (critère 1.4.3).
 TEINTES = {
-    "bleu": ("47, 128, 237", "#2f80ed"),
-    "violet": ("142, 91, 214", "#8e5bd6"),
-    "turquoise": ("20, 184, 166", "#14b8a6"),
-    "orange": ("217, 115, 13", "#d9730d"),
-    "vert": ("31, 157, 85", "#1f9d55"),
+    "bleu": ("47, 128, 237", "#1a5fc4"),
+    "violet": ("142, 91, 214", "#7440c0"),
+    "turquoise": ("20, 184, 166", "#0b6e63"),
+    "orange": ("217, 115, 13", "#a8510a"),
+    "vert": ("31, 157, 85", "#1a7a45"),
 }
 
 

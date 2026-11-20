@@ -441,11 +441,14 @@ def render_add_csv(users) -> None:
         args=(editor_key,),
     )
 
-    # Légende des couleurs de la colonne Statut
+    # Légende de la colonne Statut. Elle décrit le texte de la colonne et
+    # pas seulement les couleurs : la couleur ne doit jamais être la seule
+    # façon de comprendre l'information.
     st.caption(
-        "Statut : :green[vert] = nouveau compte, :orange[orange] = compte "
-        "existant (à ignorer ou mettre à jour), :red[rouge] = doublon ou "
-        "erreur à corriger."
+        "La colonne Statut indique en toutes lettres la situation de chaque "
+        "ligne (nouveau compte, compte existant, doublon ou erreur à "
+        "corriger). Les couleurs vert, orange et rouge ne font que renforcer "
+        "ce texte."
     )
 
     if to_fix:

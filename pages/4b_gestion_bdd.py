@@ -94,6 +94,23 @@ def couleur_split(details: dict):
     return None
 
 
+def etat_split(details: dict) -> str:
+    """
+    Renvoie l'état d'un split sous forme de texte, pour que l'information ne
+    repose pas sur la couleur seule.
+
+    - "Manquant" : le split est absent ou ne contient aucun cube
+    - "Incomplet" : il manque des masques ou des images RGB
+    - "Complet" : tout est présent
+    """
+    couleur = couleur_split(details)
+    if couleur == "red":
+        return "Manquant"
+    if couleur == "orange":
+        return "Incomplet"
+    return "Complet"
+
+
 def tableau_splits(details_par_split: dict) -> str:
     """
     Construit le tableau markdown des splits : une ligne par split avec le
@@ -102,7 +119,7 @@ def tableau_splits(details_par_split: dict) -> str:
     """
     # En-tête du tableau. La deuxième ligne règle l'alignement des colonnes :
     # nom du split à gauche, chiffres centrés
-    lignes = ["| Split | Cubes | Masques | RGB |", "|:--|:-:|:-:|:-:|"]
+    lignes = ["| Split | Cubes | Masques | RGB | État |", "|:--|:-:|:-:|:-:|:-:|"]
 
     for nom in SPLITS:
         # Un split absent du résultat compte comme un split vide
@@ -112,6 +129,7 @@ def tableau_splits(details_par_split: dict) -> str:
             str(details["cubes"]),
             str(details["annotes"]),
             str(details["rgb"]),
+            etat_split(details),
         ]
 
         # Colorer toute la ligne : on colore chaque cellule

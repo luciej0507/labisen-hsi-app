@@ -44,10 +44,11 @@ def bloc_recapitulatif(titre, teinte, lignes):
             f'<span style="color:{couleur}; font-weight:600">{titre}</span>',
             unsafe_allow_html=True,
         )
-        # Une seule ligne par choix : le nom en gris, la valeur en gras.
+        # Une seule ligne par choix : le nom, puis la valeur en gras.
+        # Le nom n'est plus en gris clair (contraste insuffisant).
         # Deux espaces + retour = saut de ligne.
         st.markdown(
-            "  \n".join(f":gray[{nom}] : **{valeur}**" for nom, valeur in lignes)
+            "  \n".join(f"{nom} : **{valeur}**" for nom, valeur in lignes)
         )
 
 

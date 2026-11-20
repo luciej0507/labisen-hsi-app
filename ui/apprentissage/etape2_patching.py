@@ -40,10 +40,30 @@ IMAGE_FORMATS = Path("assets/formats_patches.png")
 IMAGE_FULL_WIDTH = Path("assets/option_full_width.png")
 
 
-def afficher_image(chemin):
-    """Affiche une image du dossier assets, ou un message si elle est absente."""
+# Descriptions textuelles des images (Streamlit n'a pas de texte alternatif
+# pour st.image : on affiche la description sous l'image, visible de tous).
+DESCRIPTION_FORMATS = (
+    "Description de l'illustration : huit schémas d'un cube de 900 x 1000 pixels "
+    "et 300 bandes. Les quatre premiers montrent la taille d'un patch pour les "
+    "formats w1 h100, w100 h100, w200 h200 et w300 h300. Les quatre suivants "
+    "montrent le chevauchement de patches voisins pour les formats sl1 sc80, "
+    "sl50 sc50, sl100 sc100 et sl200 sc200 : plus le glissement (sl, sc) est "
+    "petit, plus les patches se chevauchent. Chaque patch traverse toutes les "
+    "bandes spectrales."
+)
+DESCRIPTION_FULL_WIDTH = (
+    "Description de l'illustration : deux schémas d'un cube de 900 x 1000 "
+    "pixels avec le format w300 h300 sl200 sc200. Avec full_width = False, 16 "
+    "patches complets sont gardés et une bande de 100 pixels en bas n'est pas "
+    "couverte. Avec full_width = True, 25 patches sont gardés : 16 complets et "
+    "9 incomplets, de dimensions réduites (par exemple 300 x 200 ou 100 x 300)."
+)
+
+
+def afficher_image(chemin, description):
+    """Affiche une image du dossier assets avec sa description, ou un message si elle est absente."""
     if chemin.exists():
-        st.image(str(chemin), width="stretch")
+        st.image(str(chemin), width="stretch", caption=description)
     else:
         st.caption("Illustration indisponible.")
 
@@ -55,7 +75,7 @@ def expander_formats():
             "Illustration sur un cube de 900 x 1000 pixels avec 300 bandes spectrales : "
             "les dimensions de vos cubes peuvent être différentes, mais le principe reste le même."
         )
-        afficher_image(IMAGE_FORMATS)
+        afficher_image(IMAGE_FORMATS, DESCRIPTION_FORMATS)
 
 
 def expander_full_width():
@@ -65,7 +85,7 @@ def expander_full_width():
             "En largeur complète, h et sc sont remplacés par la largeur des cubes. "
             "Seuls w et sl de chaque format choisi sont utilisés."
         )
-        afficher_image(IMAGE_FULL_WIDTH)
+        afficher_image(IMAGE_FULL_WIDTH, DESCRIPTION_FULL_WIDTH)
 
 
 def expanders_explications():
