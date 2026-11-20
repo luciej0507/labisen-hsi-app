@@ -137,18 +137,18 @@ def test_login_user_enregistre_la_session(session_state):
     assert auth.get_current_role() == "user"
 
 
-def test_logout_user_vide_la_session(session_state):
-    """logout_user retire les infos de connexion, mais pas le reste."""
+def test_logout_user_vide_toute_la_session(session_state):
+    """logout_user vide toute la session, y compris les données sans rapport."""
     auth.login_user({"username": "alice", "role": "user"})
-    session_state["autre_donnee"] = "a conserver"
+    session_state["autre_donnee"] = "ne doit pas survivre"
 
     auth.logout_user()
 
     assert auth.is_logged_in() is False
     assert auth.get_current_role() is None
     assert "username" not in session_state
-    # Les données sans rapport avec la connexion ne sont pas touchées
-    assert session_state["autre_donnee"] == "a conserver"
+    # Toute la session est vidée : plus aucune donnée ne reste
+    assert session_state == {}
 
 
 def test_logout_user_efface_les_donnees_de_la_page_admin(session_state):
