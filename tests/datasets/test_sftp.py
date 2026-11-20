@@ -32,7 +32,9 @@ def etat_propre(monkeypatch):
     """
     Remet à zéro la connexion partagée avant chaque test (et la restaure
     après), pour que les tests ne s'influencent pas entre eux.
+    Force aussi MODE_LOCAL à False : les tests ne doivent pas dépendre du .env.
     """
+    monkeypatch.setattr(sftp, "MODE_LOCAL", False)
     monkeypatch.setitem(sftp._connexion, "sftp", None)
     monkeypatch.setitem(sftp._connexion, "transport", None)
     monkeypatch.setitem(sftp._dernier_echec, "heure", None)

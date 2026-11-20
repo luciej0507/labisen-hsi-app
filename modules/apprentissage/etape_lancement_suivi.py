@@ -2,17 +2,25 @@
 modules/apprentissage/etape_lancement_suivi.py
 
 Étape 4 de la page Apprentissage : lancement et suivi de l'entraînement.
-Ce fichier prépare ce que la page affiche : l'état et le choix des GPU, et le
-récapitulatif de la configuration validée à l'étape Paramétrage.
+Ce fichier prépare ce que la page affiche : l'état et le choix des GPU, le
+récapitulatif de la configuration validée à l'étape Paramétrage, et l'état
+de l'entraînement en cours.
 
-Ce module ne contient aucune interface Streamlit : l'affichage est dans la
-page 4c_apprentissage.py.
+Ce module ne contient aucune interface Streamlit : l'affichage est dans
+ui/apprentissage/etape4_lancement.py. Le lancement et l'arrêt de
+l'entraînement sont dans gestion_entrainement.py.
 """
 
+import subprocess
+
 from modules.apprentissage.etape_parametrage import TITRES_BLOCS, TYPES_APPRENTISSAGE
+from modules.apprentissage.gestion_entrainement import MLFLOW_URI
 
 # Titre du bloc de choix du GPU
-TITRE_BLOC_GPU = "Choix du GPU (serveur)"
+TITRE_BLOC_GPU = "Choix du GPU"
+
+# États de l'entraînement pour lesquels le suivi se rafraîchit tout seul
+ETATS_ACTIFS = ("demarrage", "en_cours")
 
 
 # ---------------------------------------------------------------------------
@@ -21,18 +29,33 @@ TITRE_BLOC_GPU = "Choix du GPU (serveur)"
 
 def lire_gpus() -> list:
     """
-    Renvoie l'état des GPU du serveur.
+    Renvoie l'état des GPU de l'ordinateur, lu avec nvidia-smi.
 
-    ATTENTION : DONNÉES FACTICES pour le développement de l'interface.
-    À remplacer plus tard par la lecture réelle (par exemple nvidia-smi
-    exécuté sur le serveur). La mémoire est exprimée en Go.
+    La mémoire est exprimée en Go. La liste est vide si aucun GPU n'est
+    détecté (nvidia-smi absent ou en erreur).
     """
-    return [
-        {"index": 0, "utilisation": 5, "memoire_utilisee": 1.2, "memoire_totale": 24.0},
-        {"index": 1, "utilisation": 87, "memoire_utilisee": 19.5, "memoire_totale": 24.0},
-        {"index": 2, "utilisation": 0, "memoire_utilisee": 0.4, "memoire_totale": 24.0},
-        {"index": 3, "utilisation": 42, "memoire_utilisee": 10.8, "memoire_totale": 24.0},
-    ]
+    try:
+        sortie = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout
+
+        gpus = []
+        for ligne in sortie.strip().splitlines():
+            index, utilisation, utilisee, totale = [v.strip() for v in ligne.split(",")]
+            gpus.append({
+                "index": int(index),
+                "utilisation": int(utilisation),
+                "memoire_utilisee": round(float(utilisee) / 1024, 1),  # Mo -> Go
+                "memoire_totale": round(float(totale) / 1024, 1),
+            })
+        return gpus
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
 
 
 def lignes_gpus(gpus: list) -> list:
@@ -97,3 +120,33 @@ def blocs_recapitulatif(config: dict) -> list:
             ("Labels retenus", labels),
         ]),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Suivi de l'entraînement
+# ---------------------------------------------------------------------------
+
+def etat_du_run(run: dict) -> str:
+    """
+    Renvoie l'état d'un entraînement : demarrage, en_cours, termine, arrete ou erreur.
+
+    Si le processus a disparu sans écrire d'état final (plantage, arrêt
+    depuis le terminal), l'entraînement est considéré en erreur.
+    """
+    etat = run["statut"].get("state")
+    if etat == "done":
+        return "termine"
+    if etat == "stopped":
+        return "arrete"
+    if etat == "error" or not run["vivant"]:
+        return "erreur"
+    return "en_cours" if etat == "running" else "demarrage"
+
+
+def url_mlflow(statut: dict) -> str:
+    """Renvoie le lien vers le run dans MLflow (ou vers l'accueil tant que le run n'existe pas)."""
+    run_id = statut.get("run_id")
+    experience = statut.get("experiment_id")
+    if run_id and experience:
+        return f"{MLFLOW_URI}/#/experiments/{experience}/runs/{run_id}"
+    return MLFLOW_URI

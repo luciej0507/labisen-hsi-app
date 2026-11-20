@@ -10,6 +10,7 @@ dans modules/apprentissage/.
 import streamlit as st
 
 from modules.apprentissage.frise import etapes_validees
+from modules.apprentissage.gestion_entrainement import lire_run_en_cours
 from modules.comptes.auth import require_role
 from ui.apprentissage import etat
 from ui.apprentissage.etape1_dataset import etape_dataset
@@ -52,6 +53,16 @@ def main():
     message = st.session_state.pop(etat.MESSAGE, None)
     if message:
         st.success(message)
+
+    # Entraînement lancé précédemment : retrouvé même après avoir quitté l'application
+    if (
+        lire_run_en_cours() is not None
+        and st.session_state[etat.ETAPE] != etat.ETAPE_LANCEMENT
+    ):
+        st.info("Un entraînement lancé précédemment est disponible.")
+        if st.button("Voir le suivi de l'entraînement"):
+            st.session_state[etat.ETAPE] = etat.ETAPE_LANCEMENT
+            st.rerun()
 
     # Affichage de l'étape active
     FONCTIONS_ETAPES[st.session_state[etat.ETAPE]]()

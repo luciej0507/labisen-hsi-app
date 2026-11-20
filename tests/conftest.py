@@ -65,3 +65,11 @@ def session_state(monkeypatch):
     faux_etat = {}
     monkeypatch.setattr(st, "session_state", faux_etat)
     return faux_etat
+
+
+@pytest.fixture(autouse=True)
+def sans_mode_local(monkeypatch):
+    """Force MODE_LOCAL à False pour que les tests ignorent le .env."""
+    from modules.datasets import sftp
+
+    monkeypatch.setattr(sftp, "MODE_LOCAL", False)

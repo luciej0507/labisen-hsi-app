@@ -58,15 +58,20 @@ def test_tache_split_absent_et_vide():
 
 def test_resultat_additionne_les_splits():
     splits = {
-        "Train": {"cubes": 3, "annotes": 2, "incomplets": 1, "ancienne_structure": False},
-        "Test": {"cubes": 1, "annotes": 1, "incomplets": 0, "ancienne_structure": True},
+        "Train": {"cubes": 3, "annotes": 2, "rgb": 2, "incomplets": 1, "ancienne_structure": False},
+        "Test": {"cubes": 1, "annotes": 1, "rgb": 1, "incomplets": 0, "ancienne_structure": True},
     }
     resultat = stats._resultat("À compléter", splits)
 
     assert resultat["etat"] == "À compléter"
     assert resultat["cubes_par_split"] == {"Train": 3, "Test": 1}
+    assert resultat["details_par_split"] == {
+        "Train": {"cubes": 3, "annotes": 2, "rgb": 2},
+        "Test": {"cubes": 1, "annotes": 1, "rgb": 1},
+    }
     assert resultat["total_cubes"] == 4
     assert resultat["annotes"] == 3
+    assert resultat["rgb"] == 3
     assert resultat["incomplets"] == 1
     assert resultat["ancienne_structure"] is True
     assert resultat["taches"] == []
@@ -88,10 +93,13 @@ def test_stats_split_dataset_conforme(faux_sftp, creer_dataset):
     assert resultat == {
         "cubes": 2,
         "annotes": 2,
+        "rgb": 2,
         "incomplets": 0,
+        "sans_masque": 0,
+        "sans_hdr": 0,
+        "sans_rgb": 0,
         "ancienne_structure": False,
     }
-
 
 def test_stats_split_masque_manquant(faux_sftp, creer_dataset):
     creer_dataset("/ds", {"Train": ["a", "b"]}, annotes=False)
@@ -218,8 +226,8 @@ def test_calculer_stats_plusieurs_taches_independantes(brancher_sftp, creer_data
     assert resultat["etat"] == "À compléter"
     assert resultat["taches"] == [
         "Split incomplet (dossier absent : Test, Val)",
-        "2 cube(s) avec des fichiers manquants",
-        "2 masque(s) d'annotation manquant(s)",
+        "Masques d'annotation manquants : 2 (Train : 2)",
+        "En-têtes .hdr manquants : 2 (Train : 2)",
     ]
 
 
@@ -259,6 +267,26 @@ def test_lister_cubes_dataset_introuvable(brancher_sftp):
 def test_lister_cubes_serveur_injoignable(serveur_injoignable):
     assert stats.lister_cubes("/ds", "Train") == []
 
+
+# ------------------------------------------------------- tache_manquants
+
+
+def test_tache_manquants_rien_ne_manque():
+    assert stats.tache_manquants("Masques", {"Train": 0, "Test": 0}) is None
+
+
+def test_tache_manquants_detail_par_split():
+    texte = stats.tache_manquants("Masques", {"Train": 0, "Test": 1, "Val": 2})
+    # Seuls les splits concernés apparaissent dans le détail
+    assert texte == "Masques : 3 (Test : 1, Val : 2)"
+
+
+def test_calculer_stats_images_rgb_manquantes(brancher_sftp, creer_dataset):
+    creer_dataset("/ds", {"Train": ["a"], "Test": ["b"], "Val": ["c"]}, rgb=False)
+    resultat = stats.calculer_stats("/ds")
+
+    assert resultat["etat"] == "À compléter"
+    assert "Images RGB manquantes : 3 (Train : 1, Test : 1, Val : 1)" in resultat["taches"]
 
 # -------------------------------------------------------- lire_dimensions
 

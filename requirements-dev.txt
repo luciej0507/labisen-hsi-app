@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest                  # tests unitaires
+pytest-cov              # couverture de code
+mongomock               # mock pour MongoDB

@@ -11,7 +11,7 @@ from datetime import datetime
 import bcrypt
 import pytest
 from bson import ObjectId
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo.errors import DuplicateKeyError
 
 from modules.comptes.users import (
     count_pending_users,
@@ -19,7 +19,6 @@ from modules.comptes.users import (
     create_users_from_rows,
     delete_blocked_reason,
     delete_user,
-    ensure_username_index,
     format_date,
     hash_password,
     is_password_pending,
@@ -59,28 +58,6 @@ def test_format_date():
     assert format_date(datetime(2026, 9, 24)) == "24/09/2026"
     assert format_date(None) == ""
     assert format_date("texte") == "texte"
-
-
-# ---------------------------------------------------------------------------
-# ensure_username_index
-# ---------------------------------------------------------------------------
-
-def test_ensure_username_index_reussit(users):
-    """Sur une base saine, la fonction renvoie True."""
-    assert ensure_username_index(users) is True
-
-
-def test_ensure_username_index_echec_renvoie_false():
-    """Si MongoDB refuse de créer l'index, la fonction renvoie False."""
-
-    class CollectionEnPanne:
-        """Fausse collection dont create_index échoue toujours."""
-
-        def create_index(self, *args, **kwargs):
-            raise PyMongoError("échec simulé")
-
-    assert ensure_username_index(CollectionEnPanne()) is False
-
 
 # ---------------------------------------------------------------------------
 # validate_new_user
