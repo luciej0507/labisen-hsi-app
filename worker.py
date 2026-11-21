@@ -153,6 +153,10 @@ def lancer_patching_job(job: dict):
 
     DOSSIER_SUIVI.mkdir(parents=True, exist_ok=True)
 
+    # Le suivi d'un ancien patching de ce dataset ne doit pas être pris pour
+    # celui de ce job : l'interface lit ce fichier pendant que le job tourne
+    chemin_suivi(chemin_dataset).unlink(missing_ok=True)
+
     commande = [
         PYTHON_PATCHING, str(SCRIPT_PATCHING),
         "--dataset", str(chemin_dataset),

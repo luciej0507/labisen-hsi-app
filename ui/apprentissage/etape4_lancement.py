@@ -44,11 +44,10 @@ def bloc_recapitulatif(titre, teinte, lignes):
             f'<span style="color:{couleur}; font-weight:600">{titre}</span>',
             unsafe_allow_html=True,
         )
-        # Une seule ligne par choix : le nom, puis la valeur en gras.
-        # Le nom n'est plus en gris clair (contraste insuffisant).
+        # Une seule ligne par choix : le nom en gris, la valeur en gras.
         # Deux espaces + retour = saut de ligne.
         st.markdown(
-            "  \n".join(f"{nom} : **{valeur}**" for nom, valeur in lignes)
+            "  \n".join(f":gray[{nom}] : **{valeur}**" for nom, valeur in lignes)
         )
 
 
@@ -105,7 +104,10 @@ def section_lancement(config, gpu):
     if st.button("Lancer l'entraînement", type="primary", disabled=gpu is None):
         try:
             with st.spinner("Démarrage de l'entraînement..."):
-                lancer_entrainement(st.session_state[etat.DATASET], config, gpu)
+                lancer_entrainement(
+                    st.session_state[etat.DATASET], config, gpu,
+                    utilisateur=st.session_state.get("username"),
+                )
         except Exception as erreur:
             st.error(f"Impossible de lancer l'entraînement : {erreur}")
         else:

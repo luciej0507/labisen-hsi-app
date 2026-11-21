@@ -11,16 +11,24 @@ modules/versions_patching.py : ce fichier ne fait que préparer ce que la page a
 import hashlib
 import json
 import os
-import signal
-import subprocess
 import sys
-import threading
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
+from modules.jobs import (
+    EN_ATTENTE,
+    EN_COURS,
+    TYPE_PATCHING,
+    creer_job,
+    demander_arret,
+    dernier_job,
+    existe_job_actif,
+    get_jobs_collection,
+    masquer_job,
+)
 from modules.versions_patching import estimer_nb_patches, lister_versions, splits_non_patches
 
 # Choix de split source pour le patching : un split, ou tous ceux à patcher
@@ -350,16 +358,22 @@ def apercu_patching(dimensions_dataset: dict, versions: list, formats: list, spl
 
 
 # ---------------------------------------------------------------------------
-# Lancement en arrière-plan et suivi
+# Lancement et suivi du patching
 #
-# Le patching est un processus indépendant de l'application : Streamlit le
-# lance, puis lit seulement son fichier de suivi (JSON). Pour passer sur le
-# serveur, il suffira de remplacer lancer_patching, lire_suivi,
-# processus_actif et annuler_patching par des versions SSH.
+# L'application ne lance aucun calcul. Elle dépose une demande (un "job") dans
+# la file d'attente MongoDB (modules/jobs.py). Le worker (worker.py) lit cette
+# file, lance le script de patching et note l'état du job.
+#
+# Deux sources d'information, lues par etat_job :
+#   - MongoDB : l'état du job (en attente, en cours, terminé, erreur...) ;
+#   - le fichier de suivi (JSON) écrit par le script : l'avancement détaillé
+#     (format, nombre de cubes faits, cube en cours).
+# Le fichier de suivi et le journal sont sur un dossier que l'application et
+# le worker doivent tous deux voir.
 # ---------------------------------------------------------------------------
 
-# Script de patching et interpréteur Python qui le lance. L'interpréteur doit
-# disposer de torch, spectral, pandas, etc. (à adapter selon votre installation).
+# Script de patching et interpréteur Python qui le lance (utilisés par le
+# worker). L'interpréteur doit disposer de torch, spectral, pandas, etc.
 SCRIPT_PATCHING = Path("scripts_serveur/data_utils.py")
 PYTHON_PATCHING = sys.executable
 
@@ -406,106 +420,125 @@ def lire_suivi(chemin_dataset):
         return None
 
 
-def processus_actif(pid) -> bool:
-    """Indique si un processus existe encore (envoi du signal 0, qui ne fait rien)."""
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Le processus existe mais appartient à un autre utilisateur
-        return True
-    return True
+def _ancien_suivi(chemin_dataset):
+    """
+    Renvoie le suivi d'un patching lancé avant la file d'attente (sans job).
+
+    Plus personne ne s'occupe d'un tel patching : s'il est noté "en cours",
+    il est donc considéré comme interrompu.
+    """
+    suivi = lire_suivi(chemin_dataset)
+    if suivi is None:
+        return None
+    if suivi.get("etat") == "en cours":
+        suivi["etat"] = "interrompu"
+        suivi["message"] = "Le processus s'est arrêté avant la fin."
+    suivi.setdefault("en_attente", False)
+    suivi.setdefault("arret_demande", False)
+    return suivi
 
 
 def etat_job(chemin_dataset):
     """
-    Renvoie le suivi du job d'un dataset, ou None s'il n'y en a pas.
+    Renvoie l'état du dernier patching d'un dataset, ou None s'il n'y en a pas
+    (ou si l'utilisateur a masqué son résultat).
 
-    Si le fichier dit "en cours" mais que le processus n'existe plus (plantage,
-    arrêt forcé, redémarrage), l'état renvoyé est "interrompu".
+    L'état vient de MongoDB (le job). Le détail de l'avancement vient du
+    fichier de suivi écrit par le script.
+
+    Dictionnaire renvoyé :
+        etat          : "en cours", "termine", "erreur", "annule" ou "interrompu"
+        en_attente    : True tant que le worker n'a pas démarré le job. L'état
+                        vaut alors "en cours", avec zéro cube fait.
+        arret_demande : True si l'utilisateur a demandé l'annulation
+        format, splits, cubes_total, cubes_faits, cube_courant, message
     """
-    suivi = lire_suivi(chemin_dataset)
-    if suivi is not None and suivi.get("etat") == "en cours" and not processus_actif(suivi.get("pid")):
-        suivi["etat"] = "interrompu"
-        suivi["message"] = "Le processus s'est arrêté avant la fin."
-    return suivi
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_PATCHING, str(chemin_dataset))
+
+    # Aucun job : il reste peut-être le suivi d'un patching lancé avant la file d'attente
+    if job is None:
+        return _ancien_suivi(chemin_dataset)
+    # L'utilisateur a masqué ce résultat
+    if job.get("masque"):
+        return None
+
+    en_attente = job["etat"] == EN_ATTENTE
+    # En attente, le fichier de suivi est celui d'un ancien patching : on l'ignore
+    suivi = {} if en_attente else (lire_suivi(chemin_dataset) or {})
+
+    return {
+        # Pour l'interface, un job en attente est un patching qui se prépare
+        "etat": EN_COURS if en_attente else job["etat"],
+        "en_attente": en_attente,
+        "arret_demande": bool(job.get("arret_demande")),
+        "format": suivi.get("format", ""),
+        "splits": suivi.get("splits") or job["parametres"].get("splits", []),
+        "cubes_total": suivi.get("cubes_total", 0),
+        "cubes_faits": suivi.get("cubes_faits", 0),
+        "cube_courant": suivi.get("cube_courant", ""),
+        # Le message du script est plus précis que celui du worker
+        "message": suivi.get("message") or job.get("message", ""),
+    }
 
 
-def lancer_patching(chemin_dataset, splits: list, noms_formats: list, full_width: bool):
+def lancer_patching(chemin_dataset, splits: list, noms_formats: list, full_width: bool,
+                    utilisateur=None):
     """
-    Lance data_utils.py en arrière-plan et rend la main immédiatement.
+    Dépose une demande de patching dans la file d'attente et rend la main
+    immédiatement. Renvoie l'identifiant du job.
 
     `noms_formats` : noms des formats choisis dans le catalogue (le script
     retrouve leurs paramètres dans config.yaml). Plusieurs formats sont
     patchés en un seul lancement.
 
-    Le processus est détaché de l'application (nouvelle session) : il
-    continue si la page est rechargée ou fermée. Sa sortie va dans le journal.
+    L'application ne lance pas le script : c'est le worker qui le fait, dès
+    qu'il est disponible. Le patching continue donc si la page est fermée.
 
-    Pour l'instant le script tourne sur la même machine que l'application, donc
-    config.yaml est lu directement. Sur le serveur, il faudra copier ce fichier
-    avant le lancement.
+    Lève RuntimeError si un patching est déjà en attente ou en cours pour
+    ce dataset.
     """
-    DOSSIER_SUIVI.mkdir(parents=True, exist_ok=True)
+    jobs = get_jobs_collection()
+    cle = str(chemin_dataset)
 
-    commande = [
-        PYTHON_PATCHING, str(SCRIPT_PATCHING),
-        "--dataset", str(chemin_dataset),
-        "--config", str(CONFIG_FORMATS),
-        "--splits", *[s.lower() for s in splits],
-        "--formats", *noms_formats,
-        "--suivi", str(chemin_suivi(chemin_dataset)),
-    ]
-    if full_width:
-        commande.append("--full-width")
+    if existe_job_actif(jobs, TYPE_PATCHING, cle):
+        raise RuntimeError("Un patching est déjà en attente ou en cours pour ce dataset.")
 
-    # Le journal reçoit la sortie normale et les erreurs du script
-    with open(chemin_journal(chemin_dataset), "w", encoding="utf-8") as journal:
-        processus = subprocess.Popen(
-            commande, stdout=journal, stderr=subprocess.STDOUT, start_new_session=True
-        )
-
-    # Un thread attend la fin du processus pour que le système le libère
-    # proprement (sinon il reste "zombie" et paraît toujours actif)
-    threading.Thread(target=processus.wait, daemon=True).start()
-
-    # Suivi initial : le script met plusieurs secondes à démarrer (imports),
-    # et il écrasera ce fichier dès qu'il aura son propre état
-    ecrire_suivi_local(chemin_dataset, {
-        "etat": "en cours",
-        "format": "",
+    parametres = {
+        "chemin_dataset": cle,
         "splits": list(splits),
-        "cubes_total": 0,
-        "cubes_faits": 0,
-        "cube_courant": "",
-        "message": "",
-        "pid": processus.pid,
-        "debut": datetime.now().isoformat(timespec="seconds"),
-    })
+        "noms_formats": list(noms_formats),
+        "full_width": bool(full_width),
+    }
+    return creer_job(jobs, TYPE_PATCHING, parametres, utilisateur=utilisateur, cle=cle)
 
 
 def annuler_patching(chemin_dataset):
     """
-    Arrête le patching en cours et note l'annulation dans le fichier de suivi.
+    Demande l'annulation du patching en attente ou en cours de ce dataset.
+
+    Un patching en attente est annulé tout de suite. Pour un patching en
+    cours, c'est le worker qui arrête le script dans les secondes qui suivent,
+    puis note l'annulation.
 
     Le split interrompu n'a pas son CSV à 100 % : il reste donc non patché
     et pourra être relancé (le script repart alors de zéro pour ce split).
     """
-    suivi = lire_suivi(chemin_dataset)
-    if suivi is None:
-        return
-    pid = suivi.get("pid")
-    if processus_actif(pid):
-        # Le processus est chef de sa propre session : on arrête tout son groupe
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    suivi["etat"] = "annule"
-    suivi["message"] = "Patching annulé par l'utilisateur."
-    ecrire_suivi_local(chemin_dataset, suivi)
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_PATCHING, str(chemin_dataset))
+    if job is not None:
+        demander_arret(jobs, job["_id"])
 
 
 def effacer_suivi(chemin_dataset):
-    """Supprime le fichier de suivi (ce qui masque le dernier résultat dans la page)."""
+    """
+    Masque le résultat du dernier patching (le message affiché dans la page).
+
+    Le job reste en base, et le fichier de suivi est supprimé. Sans effet si
+    le patching n'est pas fini.
+    """
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_PATCHING, str(chemin_dataset))
+    if job is not None and not masquer_job(jobs, job["_id"]):
+        return  # le patching attend ou tourne encore
     chemin_suivi(chemin_dataset).unlink(missing_ok=True)

@@ -114,6 +114,9 @@ def creer_job(jobs, type_job: str, parametres: dict, utilisateur=None, gpu=None,
         "cle": cle,
         # Mis à True par l'application quand l'utilisateur clique sur "Arrêter"
         "arret_demande": False,
+        # Mis à True quand l'utilisateur masque le résultat d'un job fini
+        # (le job reste en base, mais l'interface ne l'affiche plus)
+        "masque": False,
         "message": "",
         # Renseignés par le worker quand le job démarre
         "pid": None,
@@ -147,6 +150,36 @@ def dernier_job(jobs, type_job: str, cle=None) -> Optional[dict]:
     if cle is not None:
         filtre["cle"] = cle
     return jobs.find_one(filtre, sort=[("cree_le", DESCENDING), ("_id", DESCENDING)])
+
+
+def dernier_job_visible(jobs, type_job: str, cle=None) -> Optional[dict]:
+    """
+    Renvoie le job le plus récent, sauf si l'utilisateur l'a masqué.
+
+    Renvoie None s'il n'y a aucun job, ou si le plus récent est masqué.
+    On ne remonte jamais à un job plus ancien : sinon, masquer le résultat
+    du dernier job ferait réapparaître celui d'avant.
+    """
+    job = dernier_job(jobs, type_job, cle)
+    if job is None or job.get("masque"):
+        return None
+    return job
+
+
+def masquer_job(jobs, job_id) -> bool:
+    """
+    Masque le résultat d'un job fini. Renvoie True si le job a été masqué.
+
+    Un job qui attend ou qui tourne ne peut pas être masqué.
+    """
+    identifiant = _identifiant(job_id)
+    if identifiant is None:
+        return False
+    resultat = jobs.update_one(
+        {"_id": identifiant, "etat": {"$in": list(ETATS_FINAUX)}},
+        {"$set": {"masque": True}},
+    )
+    return resultat.matched_count > 0
 
 
 def existe_job_actif(jobs, type_job: str, cle=None) -> bool:

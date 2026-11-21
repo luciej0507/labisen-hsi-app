@@ -3,25 +3,46 @@ modules/apprentissage/gestion_entrainement.py
 
 Lancement, suivi et arrêt de l'entraînement, sans interface Streamlit.
 
-L'entraînement est un processus Python indépendant (entrainement/fastflow_mlflow.py)
-lancé dans sa propre session : il continue de tourner même si l'application
-Streamlit est fermée. Tout passe par des fichiers :
+L'application ne lance aucun calcul : elle dépose une demande (un "job")
+dans la file d'attente MongoDB (modules/jobs.py). Le worker (worker.py)
+lance alors le script d'entraînement (entrainement/fastflow_mlflow.py) dans
+un processus indépendant : il continue de tourner même si l'application est
+fermée ou redémarrée.
 
-    entrainements/run_en_cours.json         : PID et dossier du dernier entraînement lancé
+Deux sources d'information, réunies par lire_run_en_cours :
+  - MongoDB : l'état du job (en attente, en cours, terminé, erreur...) ;
+  - les fichiers du run, écrits par le worker et par le script :
+
     entrainements/runs/<date>/config.json   : configuration envoyée au script
     entrainements/runs/<date>/status.json   : état écrit par le script à chaque époque
     entrainements/runs/<date>/train.log     : sortie du script
+
+Ces fichiers doivent être sur un dossier que l'application et le worker
+voient tous les deux.
 """
 
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
+
+from modules.jobs import (
+    ANNULE,
+    EN_ATTENTE,
+    ERREUR,
+    ETATS_NON_FINIS,
+    INTERROMPU,
+    TYPE_ENTRAINEMENT,
+    creer_job,
+    demander_arret,
+    dernier_job,
+    existe_job_actif,
+    get_jobs_collection,
+    masquer_job,
+)
 
 # Racine du projet (ce fichier est dans modules/apprentissage/)
 RACINE_PROJET = Path(__file__).resolve().parents[2]
@@ -34,7 +55,6 @@ SCRIPT_ENTRAINEMENT = (
 # Dossier où sont rangés les runs, la base MLflow et ses artefacts
 DOSSIER_ENTRAINEMENTS = RACINE_PROJET / "entrainements"
 DOSSIER_RUNS = DOSSIER_ENTRAINEMENTS / "runs"
-FICHIER_RUN_EN_COURS = DOSSIER_ENTRAINEMENTS / "run_en_cours.json"
 
 # Serveur MLflow local
 MLFLOW_HOTE = "127.0.0.1"
@@ -127,112 +147,112 @@ def chemin_csv(dataset, split: str, format_patches: str, fraction: int) -> Path:
     return csv
 
 
-def lancer_entrainement(dataset, config: dict, gpu: int) -> Path:
+def lancer_entrainement(dataset, config: dict, gpu: int, utilisateur=None):
     """
-    Lance l'entraînement dans un processus détaché et renvoie son dossier de run.
+    Dépose une demande d'entraînement dans la file d'attente et renvoie
+    l'identifiant du job.
 
-    dataset : chemin du dataset choisi à l'étape 1
-    config  : configuration validée à l'étape Paramétrage
-    gpu     : indice du GPU choisi
+    dataset     : chemin du dataset choisi à l'étape 1
+    config      : configuration validée à l'étape Paramétrage
+    gpu         : indice du GPU choisi
+    utilisateur : nom de l'utilisateur qui lance l'entraînement (facultatif)
+
+    C'est le worker qui lance le script, dès qu'il est disponible. Les
+    vérifications rapides (CSV présents, configuration valide) sont faites
+    ici pour que l'utilisateur voie l'erreur tout de suite.
+
+    Lève RuntimeError si un entraînement est déjà en attente ou en cours,
+    et FileNotFoundError si un CSV est introuvable.
     """
-    run = lire_run_en_cours()
-    if run is not None and run["vivant"]:
-        raise RuntimeError("Un entraînement est déjà en cours.")
+    jobs = get_jobs_collection()
 
-    # CSV d'entraînement, et de validation seulement si elle est activée
+    if existe_job_actif(jobs, TYPE_ENTRAINEMENT):
+        raise RuntimeError("Un entraînement est déjà en attente ou en cours.")
+
+    # Les CSV d'entraînement, et de validation seulement si elle est activée,
+    # doivent exister (sinon FileNotFoundError)
     format_patches = config["format_patches"]
     fraction = config["fraction_csv"]
-    csv = {"train": str(chemin_csv(dataset, config["split"], format_patches, fraction))}
+    chemin_csv(dataset, config["split"], format_patches, fraction)
     if config["parametres_generaux"]["validation"]:
-        csv["val"] = str(chemin_csv(dataset, "val", format_patches, fraction))
+        chemin_csv(dataset, "val", format_patches, fraction)
 
-    demarrer_mlflow()
+    # La configuration est enregistrée dans MongoDB : on la réduit à des types
+    # simples en la faisant passer par JSON (les tuples deviennent des listes).
+    # Elle devra de toute façon être écrite en JSON pour le script.
+    config_simple = json.loads(json.dumps(config))
 
-    # Un dossier par entraînement
-    dossier = DOSSIER_RUNS / datetime.now().strftime("%Y%m%d_%H%M%S")
-    dossier.mkdir(parents=True)
-
-    # Ce fichier est lu par le script : configuration + chemins + GPU
-    contenu = {
-        **config,
-        "dataset": str(dataset),
-        # Les chemins des patches dans les CSV sont relatifs à ce dossier
-        "racine_patches": str(Path(dataset) / DOSSIER_PATCHING),
-        "csv": csv,
-        "gpu": gpu,
-        "mlflow_uri": MLFLOW_URI,
-    }
-    ecrire_json(dossier / "config.json", contenu)
-    ecrire_json(dossier / "status.json", {"state": "starting"})
-
-    # Le GPU est choisi avec CUDA_VISIBLE_DEVICES : le script ne voit que celui-là.
-    # PYTHONPATH contient la racine du projet : le script peut ainsi importer
-    # "modules.apprentissage..." comme le fait l'application.
-    environnement = {
-        **os.environ,
-        "CUDA_VISIBLE_DEVICES": str(gpu),
-        "PYTORCH_ALLOC_CONF": "expandable_segments:True",
-        "PYTHONPATH": os.pathsep.join(
-            [str(RACINE_PROJET), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    with open(dossier / "train.log", "wb") as journal:
-        processus = subprocess.Popen(
-            [sys.executable, str(SCRIPT_ENTRAINEMENT), "--dossier", str(dossier)],
-            stdout=journal,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            env=environnement,
-            start_new_session=True,  # session à part : survit à la fermeture de Streamlit
-        )
-
-    ecrire_json(FICHIER_RUN_EN_COURS, {"pid": processus.pid, "dossier": str(dossier)})
-    return dossier
+    parametres = {"dataset": str(dataset), "config": config_simple}
+    return creer_job(
+        jobs, TYPE_ENTRAINEMENT, parametres, utilisateur=utilisateur, gpu=gpu
+    )
 
 
 # ---------------------------------------------------------------------------
 # Suivi
 # ---------------------------------------------------------------------------
 
-def processus_vivant(pid: int) -> bool:
-    """Indique si le processus d'entraînement tourne encore."""
-    try:
-        # Récolte le processus s'il est terminé (évite un processus "zombie")
-        os.waitpid(pid, os.WNOHANG)
-    except ChildProcessError:
-        pass  # ce n'est pas notre enfant (Streamlit a été relancé entre temps)
-
-    # On vérifie le nom du script, au cas où le PID serait réutilisé par un autre
-    # programme. Un processus terminé a une ligne de commande vide.
-    try:
-        with open(f"/proc/{pid}/cmdline", "rb") as fichier:
-            return SCRIPT_ENTRAINEMENT.name.encode() in fichier.read()
-    except OSError:
-        return False
-
-
 def lire_run_en_cours():
     """
-    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y en a pas.
+    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y
+    en a pas (ou si l'utilisateur l'a retiré avec oublier_run).
 
-    Dictionnaire renvoyé : pid, dossier, vivant (le processus tourne encore),
-    statut (contenu de status.json) et config (contenu de config.json).
+    Dictionnaire renvoyé :
+        job_id        : identifiant du job dans MongoDB
+        pid           : numéro du processus (côté worker)
+        dossier       : dossier du run, ou None tant que le worker n'a pas
+                        démarré le job
+        vivant        : True si l'entraînement attend ou tourne
+        en_attente    : True tant que le worker n'a pas démarré le job
+        arret_demande : True si l'utilisateur a demandé l'arrêt
+        etat_job      : état du job dans MongoDB
+        statut        : contenu de status.json, complété avec l'état du job
+        config        : contenu de config.json (ou la configuration demandée
+                        si le run n'a pas encore démarré)
     """
-    infos = lire_json(FICHIER_RUN_EN_COURS)
-    if infos is None:
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
+    if job is None or job.get("masque"):
         return None
-    dossier = Path(infos["dossier"])
+
+    etat = job["etat"]
+    dossier = Path(job["dossier"]) if job.get("dossier") else None
+
+    # Fichiers écrits par le worker et le script (absents tant que le job attend)
+    statut = (lire_json(dossier / "status.json") if dossier else None) or {}
+    config = (lire_json(dossier / "config.json") if dossier else None) or job["parametres"].get("config", {})
+
+    # L'état du job complète ce que dit le script
+    if etat == EN_ATTENTE:
+        statut = {"state": "starting"}
+    elif etat == ANNULE:
+        # Aussi pour un entraînement annulé avant de démarrer (pas de status.json)
+        statut = {**statut, "state": "stopped"}
+    elif etat in (ERREUR, INTERROMPU) and not statut.get("message"):
+        statut = {**statut, "message": job.get("message", "")}
+
     return {
-        "pid": infos["pid"],
+        "job_id": job["_id"],
+        "pid": job.get("pid"),
         "dossier": dossier,
-        "vivant": processus_vivant(infos["pid"]),
-        "statut": lire_json(dossier / "status.json") or {},
-        "config": lire_json(dossier / "config.json") or {},
+        "vivant": etat in ETATS_NON_FINIS,
+        "en_attente": etat == EN_ATTENTE,
+        "arret_demande": bool(job.get("arret_demande")),
+        "etat_job": etat,
+        "statut": statut,
+        "config": config,
     }
 
 
-def lire_log(dossier: Path, nb_lignes: int = 20) -> str:
-    """Renvoie les dernières lignes du journal de l'entraînement."""
+def lire_log(dossier, nb_lignes: int = 20) -> str:
+    """
+    Renvoie les dernières lignes du journal de l'entraînement.
+
+    Renvoie un texte vide si le dossier est None (job pas encore démarré)
+    ou si le journal n'existe pas.
+    """
+    if dossier is None:
+        return ""
     try:
         with open(Path(dossier) / "train.log", "rb") as fichier:
             fichier.seek(0, os.SEEK_END)
@@ -249,52 +269,26 @@ def lire_log(dossier: Path, nb_lignes: int = 20) -> str:
 
 def arreter_entrainement():
     """
-    Arrête l'entraînement et libère le GPU.
+    Demande l'arrêt de l'entraînement en attente ou en cours.
 
-    Le signal est envoyé à tout le groupe de processus : le script et les
-    processus de chargement des données (workers du DataLoader).
+    Un entraînement en attente est annulé tout de suite. Pour un entraînement
+    en cours, c'est le worker qui arrête le script dans les secondes qui
+    suivent (arrêt poli, puis forcé), libère le GPU et clôture le run MLflow.
     """
-    run = lire_run_en_cours()
-    if run is None or not run["vivant"]:
-        return
-    pid = run["pid"]
-
-    try:
-        # Sécurité : le processus doit être le chef de son propre groupe,
-        # sinon on risquerait d'arrêter aussi Streamlit
-        if os.getpgid(pid) != pid:
-            raise RuntimeError("Le processus d'entraînement n'a pas son propre groupe.")
-
-        # Arrêt poli d'abord, puis forcé si le processus ne répond pas sous 8 s
-        os.killpg(pid, signal.SIGTERM)
-        for _ in range(16):
-            time.sleep(0.5)
-            if not processus_vivant(pid):
-                break
-        else:
-            os.killpg(pid, signal.SIGKILL)
-            time.sleep(1)
-    except ProcessLookupError:
-        pass  # déjà terminé
-
-    # Le script a été interrompu : on met à jour le statut et le run MLflow
-    statut = run["statut"]
-    ecrire_json(
-        run["dossier"] / "status.json",
-        {**statut, "state": "stopped", "updated_at": datetime.now().isoformat()},
-    )
-    run_id = statut.get("run_id")
-    if run_id:
-        try:
-            from mlflow.tracking import MlflowClient
-
-            MlflowClient(MLFLOW_URI).set_terminated(run_id, status="KILLED")
-        except Exception:
-            pass  # le run restera affiché comme actif dans MLflow, sans autre conséquence
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
+    if job is not None:
+        demander_arret(jobs, job["_id"])
 
 
 def oublier_run():
-    """Retire l'entraînement terminé de l'écran de suivi (ses fichiers sont conservés)."""
-    run = lire_run_en_cours()
-    if run is not None and not run["vivant"]:
-        FICHIER_RUN_EN_COURS.unlink(missing_ok=True)
+    """
+    Retire l'entraînement terminé de l'écran de suivi.
+
+    Son job et ses fichiers sont conservés. Sans effet si l'entraînement
+    attend ou tourne encore.
+    """
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
+    if job is not None:
+        masquer_job(jobs, job["_id"])

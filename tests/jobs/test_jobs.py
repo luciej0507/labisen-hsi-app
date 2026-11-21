@@ -32,6 +32,7 @@ def test_creer_job_remplit_les_champs_par_defaut(jobs):
     assert job["gpu"] == 2
     assert job["cle"] == "/data/avoine"
     assert job["arret_demande"] is False
+    assert job["masque"] is False
     assert job["pid"] is None
     assert job["termine_le"] is None
     assert job["cree_le"] is not None
@@ -70,6 +71,55 @@ def test_dernier_job_renvoie_le_plus_recent_de_la_cible(jobs):
     assert file_jobs.dernier_job(jobs, file_jobs.TYPE_PATCHING, "/data/ble")["_id"] == autre_cible
     assert file_jobs.dernier_job(jobs, file_jobs.TYPE_PATCHING)["_id"] == autre_cible
     assert file_jobs.dernier_job(jobs, file_jobs.TYPE_ENTRAINEMENT) is None
+
+
+def test_masquer_job_cache_un_job_fini(jobs):
+    """Un job fini masqué n'est plus renvoyé par dernier_job_visible."""
+    job_id = nouveau_job(jobs, cle="/data/avoine")
+    file_jobs.terminer_job(jobs, job_id, file_jobs.TERMINE)
+    assert file_jobs.dernier_job_visible(jobs, file_jobs.TYPE_PATCHING, "/data/avoine") is not None
+
+    assert file_jobs.masquer_job(jobs, job_id) is True
+
+    assert file_jobs.dernier_job_visible(jobs, file_jobs.TYPE_PATCHING, "/data/avoine") is None
+    # Le job reste en base
+    assert jobs.find_one({"_id": job_id})["masque"] is True
+
+
+def test_masquer_job_refuse_un_job_qui_attend_ou_tourne(jobs):
+    """Un job pas fini ne peut pas être masqué."""
+    job_id = nouveau_job(jobs)
+    assert file_jobs.masquer_job(jobs, job_id) is False
+
+    file_jobs.reserver_prochain_job(jobs)
+    assert file_jobs.masquer_job(jobs, job_id) is False
+    assert jobs.find_one({"_id": job_id})["masque"] is False
+
+
+def test_masquer_job_identifiant_invalide(jobs):
+    """Un identifiant invalide ou inconnu renvoie False sans erreur."""
+    assert file_jobs.masquer_job(jobs, "n'importe quoi") is False
+    assert file_jobs.masquer_job(jobs, ObjectId()) is False
+
+
+def test_dernier_job_visible_ne_remonte_pas_a_un_job_plus_ancien(jobs):
+    """
+    Masquer le dernier job ne fait pas réapparaître celui d'avant :
+    sinon un ancien résultat s'afficherait à sa place.
+    """
+    ancien = nouveau_job(jobs, cle="/data/avoine")
+    file_jobs.terminer_job(jobs, ancien, file_jobs.TERMINE)
+    recent = nouveau_job(jobs, cle="/data/avoine")
+    file_jobs.terminer_job(jobs, recent, file_jobs.ERREUR)
+
+    file_jobs.masquer_job(jobs, recent)
+
+    assert file_jobs.dernier_job_visible(jobs, file_jobs.TYPE_PATCHING, "/data/avoine") is None
+
+
+def test_dernier_job_visible_sans_job(jobs):
+    """Sans aucun job, il n'y a rien à afficher."""
+    assert file_jobs.dernier_job_visible(jobs, file_jobs.TYPE_PATCHING) is None
 
 
 def test_existe_job_actif(jobs):

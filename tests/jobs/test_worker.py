@@ -244,6 +244,27 @@ def test_lancer_patching_job_construit_la_bonne_commande(jobs, monkeypatch):
     assert infos["journal"].endswith(".log")
 
 
+def test_lancer_patching_job_efface_le_suivi_d_un_ancien_patching(jobs, monkeypatch):
+    """
+    Le suivi d'un ancien patching est supprimé avant le lancement : l'interface
+    ne doit pas le prendre pour l'avancement du nouveau job.
+    """
+    worker.ecrire_suivi_local("/data/avoine", {"etat": "termine", "cubes_faits": 99})
+    vus_au_lancement = []
+
+    def faux_lancer_processus(commande, fichier_journal, environnement=None):
+        # À cet instant, l'ancien suivi ne doit plus exister
+        vus_au_lancement.append(worker.lire_suivi("/data/avoine"))
+        return SimpleNamespace(pid=4242)
+
+    monkeypatch.setattr(worker, "lancer_processus", faux_lancer_processus)
+    job_id = job_patching(jobs)
+
+    worker.lancer_patching_job(file_jobs.lire_job(jobs, job_id))
+
+    assert vus_au_lancement == [None]
+
+
 def test_lancer_patching_job_ecrit_un_premier_suivi_avec_le_pid(jobs, monkeypatch):
     """Un suivi "en cours" est écrit tout de suite, avec le pid du script."""
     monkeypatch.setattr(
