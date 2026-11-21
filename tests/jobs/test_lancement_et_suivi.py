@@ -29,6 +29,8 @@ def decor(monkeypatch, tmp_path, jobs):
     - les deux modules utilisent la fausse collection au lieu de MongoDB.
     """
     monkeypatch.chdir(tmp_path)
+    # Pas de vrai nvidia-smi quand le worker tourne dans les tests
+    monkeypatch.setattr(worker, "interroger_gpus", lambda: [])
     monkeypatch.setattr(etape_patching, "get_jobs_collection", lambda: jobs)
     monkeypatch.setattr(gestion_entrainement, "get_jobs_collection", lambda: jobs)
 

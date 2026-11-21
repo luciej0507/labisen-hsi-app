@@ -12,6 +12,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from pymongo.errors import PyMongoError
 
 import worker
 from modules import jobs as file_jobs
@@ -28,6 +29,8 @@ def environnement_de_test(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(worker, "INTERVALLE_SURVEILLANCE", 0.05)
     monkeypatch.setattr(worker, "DELAI_ARRET_POLI", 2)
+    # Pas de vrai nvidia-smi dans les tests
+    monkeypatch.setattr(worker, "interroger_gpus", lambda: [])
 
 
 def faux_lancement(code_python: str, tmp_path):
@@ -141,6 +144,30 @@ def test_le_worker_enchaine_les_jobs_dans_l_ordre(jobs, monkeypatch, tmp_path):
     assert file_jobs.lire_job(jobs, deuxieme)["etat"] == file_jobs.TERMINE
 
     assert worker.traiter_un_job(jobs) is False
+
+
+def test_une_panne_de_mongodb_pendant_la_surveillance_ne_tue_pas_le_script(jobs, monkeypatch, tmp_path):
+    """
+    Si MongoDB ne répond pas un instant, le script continue de tourner et le
+    job se termine normalement : la surveillance réessaie au tour suivant.
+    """
+    appels = []
+
+    def mettre_a_jour_en_panne(*arguments, **options):
+        appels.append(1)
+        raise PyMongoError("MongoDB injoignable")
+
+    monkeypatch.setattr(worker, "mettre_a_jour", mettre_a_jour_en_panne)
+    job_id = job_patching(jobs)
+    processus = worker.lancer_processus(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"], tmp_path / "faux.log"
+    )
+
+    resultat, code = worker.surveiller(jobs, job_id, processus)
+
+    assert resultat == file_jobs.TERMINE
+    assert code == 0
+    assert len(appels) >= 2  # la surveillance a bien réessayé
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +350,10 @@ def test_lancer_entrainement_job_prepare_le_run(jobs, monkeypatch, tmp_path):
 
     processus, infos = worker.lancer_entrainement_job(file_jobs.lire_job(jobs, job_id))
 
-    # Le script est lancé avec le dossier du run et le bon GPU
+    # Le script est lancé avec le dossier du run et le bon GPU, numéroté comme
+    # dans nvidia-smi
     assert appels[0]["environnement"]["CUDA_VISIBLE_DEVICES"] == "2"
+    assert appels[0]["environnement"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
     assert "--dossier" in appels[0]["commande"]
     assert infos["dossier"] in appels[0]["commande"]
 

@@ -59,6 +59,11 @@ from modules.apprentissage.gestion_entrainement import (
     ecrire_json,
     lire_json,
 )
+from modules.etat_gpus import (
+    NOM_COLLECTION_ETAT_WORKER,
+    interroger_gpus,
+    publier_etat_gpus,
+)
 from modules.jobs import (
     ANNULE,
     ERREUR,
@@ -82,6 +87,42 @@ INTERVALLE_SURVEILLANCE = 2
 
 # Secondes laissées à un script pour s'arrêter poliment avant de le forcer
 DELAI_ARRET_POLI = 8
+
+# Secondes minimum entre deux relevés de l'état des GPU
+INTERVALLE_GPUS = 5
+
+# Moment (horloge interne) du dernier relevé des GPU. Au départ, "jamais".
+_derniere_publication = float("-inf")
+
+
+# ---------------------------------------------------------------------------
+# État des GPU
+# ---------------------------------------------------------------------------
+
+def publier_gpus_si_necessaire(collection_jobs, forcer: bool = False):
+    """
+    Relève l'état des GPU avec nvidia-smi et le publie dans MongoDB.
+
+    Cette fonction est appelée à chaque tour des boucles du worker (attente
+    d'un job et surveillance d'un job). Elle ne fait rien si le dernier
+    relevé date de moins de INTERVALLE_GPUS secondes, sauf si forcer vaut True.
+
+    L'application lit cet état pour afficher les GPU (elle n'a pas de GPU
+    elle-même). Un problème de MongoDB est ignoré : c'est une information
+    secondaire, qui ne doit jamais interrompre un job.
+    """
+    global _derniere_publication
+
+    if not forcer and time.monotonic() - _derniere_publication < INTERVALLE_GPUS:
+        return
+    _derniere_publication = time.monotonic()
+
+    try:
+        # La collection d'état est dans la même base que celle des jobs
+        collection_etat = collection_jobs.database[NOM_COLLECTION_ETAT_WORKER]
+        publier_etat_gpus(collection_etat, interroger_gpus())
+    except PyMongoError as erreur:
+        print(f"[worker] État des GPU non publié : {erreur}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +293,15 @@ def lancer_entrainement_job(job: dict):
     ecrire_json(dossier / "status.json", {"state": "starting"})
 
     # Le script ne voit que le GPU choisi (CUDA_VISIBLE_DEVICES).
+    # CUDA_DEVICE_ORDER=PCI_BUS_ID donne aux GPU la même numérotation que
+    # nvidia-smi : sans cela, le "GPU 1" choisi dans l'interface pourrait
+    # être un autre GPU que celui affiché dans le tableau, si les GPU du
+    # serveur ne sont pas tous identiques.
     # PYTHONPATH contient la racine du projet : le script peut ainsi importer
     # "modules.apprentissage..." comme le fait l'application.
     environnement = {
         **os.environ,
+        "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
         "CUDA_VISIBLE_DEVICES": str(gpu),
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
         "PYTHONPATH": os.pathsep.join(
@@ -308,18 +354,26 @@ def surveiller(collection, job_id, processus):
 
     Toutes les INTERVALLE_SURVEILLANCE secondes :
       - on rafraîchit la "dernière activité" du job (preuve que le worker vit) ;
-      - on regarde si l'utilisateur a demandé l'arrêt.
+      - on regarde si l'utilisateur a demandé l'arrêt ;
+      - on publie l'état des GPU (voir publier_gpus_si_necessaire).
+
+    Si MongoDB ne répond pas un instant, le script continue de tourner et on
+    réessaie au tour suivant.
 
     Renvoie (résultat, code), où résultat vaut TERMINE, ERREUR ou ANNULE
     et code est le code de sortie du script (0 = tout s'est bien passé).
     """
     while processus.poll() is None:
-        mettre_a_jour(collection, job_id)
+        try:
+            mettre_a_jour(collection, job_id)
 
-        if arret_est_demande(collection, job_id):
-            arreter_processus(processus)
-            return ANNULE, processus.returncode
+            if arret_est_demande(collection, job_id):
+                arreter_processus(processus)
+                return ANNULE, processus.returncode
+        except PyMongoError as erreur:
+            print(f"[worker] MongoDB ne répond pas pendant la surveillance : {erreur}", flush=True)
 
+        publier_gpus_si_necessaire(collection)
         time.sleep(INTERVALLE_SURVEILLANCE)
 
     code = processus.returncode
@@ -414,9 +468,16 @@ def main():
     if nombre:
         print(f"[worker] {nombre} job(s) marqué(s) comme interrompu(s).", flush=True)
 
+    # Premier relevé des GPU tout de suite : l'application sait ainsi que le
+    # worker est là, sans attendre le prochain tour
+    publier_gpus_si_necessaire(collection, forcer=True)
+
     print("[worker] En attente de jobs (Ctrl+C pour arrêter).", flush=True)
     try:
         while True:
+            # Relevé des GPU (ne fait rien si le dernier est récent)
+            publier_gpus_si_necessaire(collection)
+
             try:
                 travail_fait = traiter_un_job(collection)
             except PyMongoError as erreur:

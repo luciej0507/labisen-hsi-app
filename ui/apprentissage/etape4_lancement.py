@@ -14,7 +14,7 @@ from modules.apprentissage.etape_lancement_suivi import (
     etat_du_run,
     libelle_gpu,
     lignes_gpus,
-    lire_gpus,
+    lire_etat_gpus,
     url_mlflow,
 )
 from modules.apprentissage.gestion_entrainement import (
@@ -70,9 +70,25 @@ def section_recapitulatif(config):
 def section_serveur():
     """Bloc de l'étape 4 : état des GPU et choix d'un GPU. Retourne l'indice choisi (None si aucun GPU)."""
     with st.container(key="bloc-vert"), st.expander(TITRE_BLOC_GPU, expanded=True):
-        gpus = lire_gpus()
+        # L'état des GPU est relevé par le worker et publié dans MongoDB
+        releve = lire_etat_gpus()
+        gpus = releve["gpus"]
+
+        if not releve["worker_actif"]:
+            st.error(
+                "Le worker ne répond pas : l'état des GPU est inconnu et "
+                "l'entraînement ne pourra pas démarrer. Lancez-le avec "
+                "« python worker.py », puis actualisez."
+            )
+            st.button("Actualiser l'état des GPU", key="gpu_actualiser_worker")
+            return None
+
         if not gpus:
-            st.error("Aucun GPU détecté : la commande nvidia-smi n'a rien renvoyé.")
+            st.error(
+                "Aucun GPU détecté : la commande nvidia-smi n'a rien renvoyé "
+                "sur la machine du worker."
+            )
+            st.button("Actualiser l'état des GPU", key="gpu_actualiser_vide")
             return None
 
         st.dataframe(
@@ -85,6 +101,7 @@ def section_serveur():
                 )
             },
         )
+        st.caption(f"Relevé effectué il y a {releve['age_secondes']} s.")
         # Un clic relance la page, ce qui relit l'état des GPU
         st.button("Actualiser l'état des GPU")
 
