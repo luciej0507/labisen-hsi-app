@@ -14,7 +14,7 @@ from modules.apprentissage.etape_lancement_suivi import (
     etat_du_run,
     libelle_gpu,
     lignes_gpus,
-    lire_gpus,
+    lire_etat_gpus,
     url_mlflow,
 )
 from modules.apprentissage.gestion_entrainement import (
@@ -25,6 +25,10 @@ from modules.apprentissage.gestion_entrainement import (
     oublier_run,
 )
 from ui.apprentissage import etat
+from ui.apprentissage.alerte_service import (
+    afficher_alerte_service_arrete,
+    service_calcul_actif,
+)
 from ui.apprentissage.styles import (
     TEINTES,
     css_blocs_parametrage,
@@ -44,11 +48,10 @@ def bloc_recapitulatif(titre, teinte, lignes):
             f'<span style="color:{couleur}; font-weight:600">{titre}</span>',
             unsafe_allow_html=True,
         )
-        # Une seule ligne par choix : le nom, puis la valeur en gras.
-        # Le nom n'est plus en gris clair (contraste insuffisant).
+        # Une seule ligne par choix : le nom en gris, la valeur en gras.
         # Deux espaces + retour = saut de ligne.
         st.markdown(
-            "  \n".join(f"{nom} : **{valeur}**" for nom, valeur in lignes)
+            "  \n".join(f":gray[{nom}] : **{valeur}**" for nom, valeur in lignes)
         )
 
 
@@ -71,9 +74,21 @@ def section_recapitulatif(config):
 def section_serveur():
     """Bloc de l'étape 4 : état des GPU et choix d'un GPU. Retourne l'indice choisi (None si aucun GPU)."""
     with st.container(key="bloc-vert"), st.expander(TITRE_BLOC_GPU, expanded=True):
-        gpus = lire_gpus()
+        # L'état des GPU est relevé par le worker et publié dans MongoDB
+        releve = lire_etat_gpus()
+        gpus = releve["gpus"]
+
+        if not releve["worker_actif"]:
+            afficher_alerte_service_arrete("lancement_entrainement")
+            st.button("Actualiser l'état des GPU", key="gpu_actualiser_worker")
+            return None
+
         if not gpus:
-            st.error("Aucun GPU détecté : la commande nvidia-smi n'a rien renvoyé.")
+            st.error(
+                "Aucun GPU n'a été détecté sur la machine qui exécute les "
+                "calculs. Prévenez l'administrateur de la plateforme."
+            )
+            st.button("Actualiser l'état des GPU", key="gpu_actualiser_vide")
             return None
 
         st.dataframe(
@@ -86,6 +101,7 @@ def section_serveur():
                 )
             },
         )
+        st.caption(f"Relevé effectué il y a {releve['age_secondes']} s.")
         # Un clic relance la page, ce qui relit l'état des GPU
         st.button("Actualiser l'état des GPU")
 
@@ -105,7 +121,10 @@ def section_lancement(config, gpu):
     if st.button("Lancer l'entraînement", type="primary", disabled=gpu is None):
         try:
             with st.spinner("Démarrage de l'entraînement..."):
-                lancer_entrainement(st.session_state[etat.DATASET], config, gpu)
+                lancer_entrainement(
+                    st.session_state[etat.DATASET], config, gpu,
+                    utilisateur=st.session_state.get("username"),
+                )
         except Exception as erreur:
             st.error(f"Impossible de lancer l'entraînement : {erreur}")
         else:
@@ -153,7 +172,12 @@ def suivi_entrainement(etait_actif):
     statut = run["statut"]
 
     # --- Message d'état ---
-    if etat_run == "demarrage":
+    if run["en_attente"]:
+        st.info(
+            "En attente de démarrage : la demande est enregistrée, "
+            "l'entraînement démarrera dès que le service de calcul sera libre."
+        )
+    elif etat_run == "demarrage":
         st.info("Démarrage : chargement des bibliothèques, des données et du modèle...")
     elif etat_run == "en_cours":
         st.info("Entraînement en cours.")
@@ -166,6 +190,15 @@ def suivi_entrainement(etait_actif):
             "Le processus s'est arrêté de façon inattendue. Consultez le journal."
         )
         st.error(f"Entraînement en erreur : {message}")
+
+    # Si le service de calcul est arrêté, rien ne va avancer : on prévient
+    if actif and not service_calcul_actif():
+        afficher_alerte_service_arrete("attente" if run["en_attente"] else "en_cours")
+    if actif and run["arret_demande"]:
+        st.info(
+            "Arrêt demandé : le service de calcul arrête l'entraînement, "
+            "cela peut prendre quelques secondes."
+        )
 
     # --- Progression ---
     total = statut.get("total_epochs")
@@ -184,7 +217,9 @@ def suivi_entrainement(etait_actif):
     # --- Lien MLflow et boutons ---
     st.link_button("Ouvrir le suivi dans MLflow", url_mlflow(statut))
     if actif:
-        boutons_arret()
+        # Une fois l'arrêt demandé, le bouton d'arrêt n'a plus lieu d'être
+        if not run["arret_demande"]:
+            boutons_arret()
     elif st.button("Nouvel entraînement", type="primary"):
         oublier_run()
         st.rerun()

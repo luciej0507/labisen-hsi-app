@@ -11,8 +11,7 @@ ui/apprentissage/etape4_lancement.py. Le lancement et l'arrêt de
 l'entraînement sont dans gestion_entrainement.py.
 """
 
-import subprocess
-
+from modules import etat_gpus
 from modules.apprentissage.etape_parametrage import TITRES_BLOCS, TYPES_APPRENTISSAGE
 from modules.apprentissage.gestion_entrainement import MLFLOW_URI
 
@@ -27,35 +26,21 @@ ETATS_ACTIFS = ("demarrage", "en_cours")
 # GPU
 # ---------------------------------------------------------------------------
 
-def lire_gpus() -> list:
+def lire_etat_gpus() -> dict:
     """
-    Renvoie l'état des GPU de l'ordinateur, lu avec nvidia-smi.
+    Renvoie l'état des GPU du serveur, tel que le worker l'a publié dans MongoDB.
 
-    La mémoire est exprimée en Go. La liste est vide si aucun GPU n'est
-    détecté (nvidia-smi absent ou en erreur).
+    L'application ne lance pas nvidia-smi elle-même : elle peut tourner sur
+    une machine sans GPU. C'est le worker qui relève l'état des GPU (voir
+    modules/etat_gpus.py).
+
+    Dictionnaire renvoyé :
+        gpus         : liste des GPU, avec la mémoire en Go (vide si aucun
+                       GPU n'est détecté ou si le worker est arrêté)
+        worker_actif : False si le worker ne publie plus rien
+        age_secondes : ancienneté du relevé, en secondes (None s'il n'y en a pas)
     """
-    try:
-        sortie = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,utilization.gpu,memory.used,memory.total",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True, text=True, timeout=10, check=True,
-        ).stdout
-
-        gpus = []
-        for ligne in sortie.strip().splitlines():
-            index, utilisation, utilisee, totale = [v.strip() for v in ligne.split(",")]
-            gpus.append({
-                "index": int(index),
-                "utilisation": int(utilisation),
-                "memoire_utilisee": round(float(utilisee) / 1024, 1),  # Mo -> Go
-                "memoire_totale": round(float(totale) / 1024, 1),
-            })
-        return gpus
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return []
+    return etat_gpus.lire_etat_gpus(etat_gpus.get_etat_worker_collection())
 
 
 def lignes_gpus(gpus: list) -> list:

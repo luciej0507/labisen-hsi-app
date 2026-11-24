@@ -24,7 +24,7 @@ import streamlit as st
 from modules.comptes.auth import get_current_role, is_logged_in, logout_user
 
 # Informations affichées dans l'en-tête et dans le pied de page.
-NOM_APPLI = "SpectraVision"
+NOM_APPLI = "SpectraLab.AI"  # à modifier ici uniquement
 VERSION_APPLI = "v0.1.0"  # à modifier ici uniquement
 
 # Dossier des logos, à la racine du projet.

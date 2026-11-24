@@ -30,6 +30,10 @@ from modules.apprentissage.etape_patching import (
 )
 from modules.apprentissage.formats import formater_nombre
 from ui.apprentissage import etat
+from ui.apprentissage.alerte_service import (
+    afficher_alerte_service_arrete,
+    service_calcul_actif,
+)
 from ui.apprentissage.cache import dimensions_du_dataset, versions_du_dataset
 
 # Intervalle (en secondes) de rafraîchissement de l'avancement du patching
@@ -40,30 +44,10 @@ IMAGE_FORMATS = Path("assets/formats_patches.png")
 IMAGE_FULL_WIDTH = Path("assets/option_full_width.png")
 
 
-# Descriptions textuelles des images (Streamlit n'a pas de texte alternatif
-# pour st.image : on affiche la description sous l'image, visible de tous).
-DESCRIPTION_FORMATS = (
-    "Description de l'illustration : huit schémas d'un cube de 900 x 1000 pixels "
-    "et 300 bandes. Les quatre premiers montrent la taille d'un patch pour les "
-    "formats w1 h100, w100 h100, w200 h200 et w300 h300. Les quatre suivants "
-    "montrent le chevauchement de patches voisins pour les formats sl1 sc80, "
-    "sl50 sc50, sl100 sc100 et sl200 sc200 : plus le glissement (sl, sc) est "
-    "petit, plus les patches se chevauchent. Chaque patch traverse toutes les "
-    "bandes spectrales."
-)
-DESCRIPTION_FULL_WIDTH = (
-    "Description de l'illustration : deux schémas d'un cube de 900 x 1000 "
-    "pixels avec le format w300 h300 sl200 sc200. Avec full_width = False, 16 "
-    "patches complets sont gardés et une bande de 100 pixels en bas n'est pas "
-    "couverte. Avec full_width = True, 25 patches sont gardés : 16 complets et "
-    "9 incomplets, de dimensions réduites (par exemple 300 x 200 ou 100 x 300)."
-)
-
-
-def afficher_image(chemin, description):
-    """Affiche une image du dossier assets avec sa description, ou un message si elle est absente."""
+def afficher_image(chemin):
+    """Affiche une image du dossier assets, ou un message si elle est absente."""
     if chemin.exists():
-        st.image(str(chemin), width="stretch", caption=description)
+        st.image(str(chemin), width="stretch")
     else:
         st.caption("Illustration indisponible.")
 
@@ -75,7 +59,7 @@ def expander_formats():
             "Illustration sur un cube de 900 x 1000 pixels avec 300 bandes spectrales : "
             "les dimensions de vos cubes peuvent être différentes, mais le principe reste le même."
         )
-        afficher_image(IMAGE_FORMATS, DESCRIPTION_FORMATS)
+        afficher_image(IMAGE_FORMATS)
 
 
 def expander_full_width():
@@ -85,7 +69,7 @@ def expander_full_width():
             "En largeur complète, h et sc sont remplacés par la largeur des cubes. "
             "Seuls w et sl de chaque format choisi sont utilisés."
         )
-        afficher_image(IMAGE_FULL_WIDTH, DESCRIPTION_FULL_WIDTH)
+        afficher_image(IMAGE_FULL_WIDTH)
 
 
 def expanders_explications():
@@ -287,12 +271,28 @@ def fragment_suivi(chemin_dataset):
     # Tant que le script démarre, le total est inconnu (0)
     fraction = faits / total if total else 0.0
     texte = f"{faits}/{total} cubes" if total else "Préparation en cours..."
+    if suivi["en_attente"]:
+        texte = "En attente de démarrage..."
 
     st.markdown(f"Format(s) : **{suivi['format'] or '...'}**")
     st.progress(fraction, text=texte)
     if suivi["cube_courant"]:
         st.caption(f"Cube en cours : {suivi['cube_courant']}")
-    bouton_annulation(chemin_dataset)
+
+    # Si le service de calcul est arrêté, on prévient : rien ne va avancer
+    if not service_calcul_actif():
+        afficher_alerte_service_arrete("attente" if suivi["en_attente"] else "en_cours")
+    elif suivi["en_attente"]:
+        st.caption(
+            "Un seul calcul est exécuté à la fois : le patching démarrera "
+            "dès que le service de calcul sera libre."
+        )
+
+    # Une fois l'arrêt demandé, le bouton d'annulation n'a plus lieu d'être
+    if suivi["arret_demande"]:
+        st.info("Arrêt demandé : cela peut prendre quelques secondes.")
+    else:
+        bouton_annulation(chemin_dataset)
 
 
 def section_suivi(chemin_dataset):
@@ -340,6 +340,8 @@ def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_a
             "Un patching est déjà en cours pour ce dataset : "
             "attendez sa fin ou annulez-le ci-dessus."
         )
+    elif not service_calcul_actif():
+        afficher_alerte_service_arrete("lancement_patching")
 
     # Désactivé s'il n'y a aucun cube à patcher, ou si un patching tourne déjà
     if not st.button(
@@ -351,8 +353,11 @@ def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_a
 
     try:
         noms_formats = [f["nom_catalogue"] for f in formats]
-        lancer_patching(chemin_dataset, splits, noms_formats, full_width)
-    except OSError as erreur:
+        lancer_patching(
+            chemin_dataset, splits, noms_formats, full_width,
+            utilisateur=st.session_state.get("username"),
+        )
+    except (OSError, RuntimeError) as erreur:
         st.error(f"Impossible de lancer le patching : {erreur}")
         return
 
