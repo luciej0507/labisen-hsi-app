@@ -30,10 +30,6 @@ from modules.apprentissage.etape_patching import (
 )
 from modules.apprentissage.formats import formater_nombre
 from ui.apprentissage import etat
-from ui.apprentissage.alerte_service import (
-    afficher_alerte_service_arrete,
-    service_calcul_actif,
-)
 from ui.apprentissage.cache import dimensions_du_dataset, versions_du_dataset
 
 # Intervalle (en secondes) de rafraîchissement de l'avancement du patching
@@ -211,7 +207,7 @@ def section_apercu(dimensions, versions, formats, splits):
     col2.metric("Patches estimés", formater_nombre(apercu["total_patches"]))
 
     if apercu["nb_cubes"] == 0:
-        st.info("Aucun cube trouvé dans le ou les splits choisis (ou serveur injoignable).")
+        st.info("Aucun cube trouvé dans le ou les splits choisis.")
     else:
         st.caption(
             "Par format : "
@@ -271,28 +267,12 @@ def fragment_suivi(chemin_dataset):
     # Tant que le script démarre, le total est inconnu (0)
     fraction = faits / total if total else 0.0
     texte = f"{faits}/{total} cubes" if total else "Préparation en cours..."
-    if suivi["en_attente"]:
-        texte = "En attente de démarrage..."
 
     st.markdown(f"Format(s) : **{suivi['format'] or '...'}**")
     st.progress(fraction, text=texte)
     if suivi["cube_courant"]:
         st.caption(f"Cube en cours : {suivi['cube_courant']}")
-
-    # Si le service de calcul est arrêté, on prévient : rien ne va avancer
-    if not service_calcul_actif():
-        afficher_alerte_service_arrete("attente" if suivi["en_attente"] else "en_cours")
-    elif suivi["en_attente"]:
-        st.caption(
-            "Un seul calcul est exécuté à la fois : le patching démarrera "
-            "dès que le service de calcul sera libre."
-        )
-
-    # Une fois l'arrêt demandé, le bouton d'annulation n'a plus lieu d'être
-    if suivi["arret_demande"]:
-        st.info("Arrêt demandé : cela peut prendre quelques secondes.")
-    else:
-        bouton_annulation(chemin_dataset)
+    bouton_annulation(chemin_dataset)
 
 
 def section_suivi(chemin_dataset):
@@ -340,8 +320,6 @@ def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_a
             "Un patching est déjà en cours pour ce dataset : "
             "attendez sa fin ou annulez-le ci-dessus."
         )
-    elif not service_calcul_actif():
-        afficher_alerte_service_arrete("lancement_patching")
 
     # Désactivé s'il n'y a aucun cube à patcher, ou si un patching tourne déjà
     if not st.button(
@@ -381,11 +359,6 @@ def etape_patching():
     chemin_dataset = st.session_state[etat.DATASET]
     with st.spinner("Recherche des formats de patches disponibles..."):
         versions = versions_du_dataset(chemin_dataset)
-
-    # Serveur injoignable : on ne peut ni lister les formats ni lancer de patching
-    if versions is None:
-        st.warning("Serveur injoignable : impossible de lire les formats de patches disponibles.")
-        return
 
     # Avancement du patching (affiché en haut pour rester visible), puis le reste
     job_actif = section_suivi(chemin_dataset)

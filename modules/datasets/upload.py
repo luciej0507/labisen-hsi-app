@@ -11,14 +11,12 @@ jamais écrasé.
 Ce module n'importe jamais Streamlit.
 """
 
-import posixpath
+import os
 import re
-import stat
+import shutil
 import zipfile
 
-import paramiko
-
-from modules.datasets.sftp import obtenir_sftp, DATASETS_REMOTE_PATH
+from modules.datasets.chemins import DATASETS_PATH
 from modules.datasets.stats import SPLITS
 
 # Un nom (de dataset ou d'utilisateur) ne contient que des lettres, des
@@ -33,7 +31,7 @@ def nom_valide(nom: str) -> bool:
 
 def dossier_utilisateur(username: str) -> str:
     """Renvoie le dossier personnel d'un utilisateur : <racine>/<username>."""
-    return f"{DATASETS_REMOTE_PATH.rstrip('/')}/{username}"
+    return f"{DATASETS_PATH.rstrip('/')}/{username}"
 
 
 def chemin_dataset_utilisateur(username: str, nom_dataset: str) -> str:
@@ -53,31 +51,18 @@ def ajouter_dataset_acces(users, username: str, chemin: str) -> None:
     )
 
 
-def creer_dossier_distant(sftp, chemin: str) -> None:
-    """Crée un dossier sur le serveur, ainsi que ses parents s'ils manquent."""
-    courant = ""
-    for morceau in chemin.strip("/").split("/"):
-        courant += "/" + morceau
-        try:
-            # Le dossier existe déjà : rien à faire
-            sftp.stat(courant)
-        except IOError:
-            sftp.mkdir(courant)
+def creer_dossier(chemin: str) -> None:
+    """Crée un dossier, ainsi que ses parents s'ils manquent (rien si déjà là)."""
+    os.makedirs(chemin, exist_ok=True)
 
 
-def supprimer_dossier_distant(sftp, chemin: str) -> None:
+def supprimer_dossier(chemin: str) -> None:
     """
-    Supprime un dossier et tout son contenu sur le serveur.
+    Supprime un dossier et tout son contenu.
 
     Sert uniquement à nettoyer un dataset à moitié envoyé après une erreur.
     """
-    for entree in sftp.listdir_attr(chemin):
-        chemin_entree = f"{chemin}/{entree.filename}"
-        if stat.S_ISDIR(entree.st_mode):
-            supprimer_dossier_distant(sftp, chemin_entree)
-        else:
-            sftp.remove(chemin_entree)
-    sftp.rmdir(chemin)
+    shutil.rmtree(chemin)
 
 
 def _preparer_entrees(archive):
@@ -134,8 +119,8 @@ def envoyer_zip(fichier_zip, username: str, nom_dataset: str):
     Envoie le contenu d'une archive zip sur le serveur, dans l'espace de
     l'utilisateur : <racine>/<username>/<nom_dataset>/.
 
-    `fichier_zip` est l'objet renvoyé par st.file_uploader. Les fichiers sont
-    envoyés directement depuis la mémoire, sans passer par le disque local.
+    `fichier_zip` est l'objet renvoyé par st.file_uploader. Les fichiers de
+    l'archive sont extraits directement vers le dossier du dataset.
 
     Renvoie (succes, message, chemin) : `chemin` vaut None en cas d'échec.
     Un dataset qui existe déjà n'est jamais écrasé.
@@ -161,40 +146,31 @@ def envoyer_zip(fichier_zip, username: str, nom_dataset: str):
     if erreur:
         return False, erreur, None
 
-    # Connexion partagée au serveur
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        return False, "Serveur injoignable. Réessayez dans un instant.", None
-
     # Refus si le dataset existe déjà
-    try:
-        sftp.stat(chemin)
+    if os.path.exists(chemin):
         return False, "Un dataset portant ce nom existe déjà.", None
-    except IOError:
-        pass
 
-    # Envoi : on recrée l'arborescence puis on envoie chaque fichier
+    # Envoi : on recrée l'arborescence puis on copie chaque fichier
     try:
-        creer_dossier_distant(sftp, chemin)
+        creer_dossier(chemin)
         dossiers_crees = set()
         for info, relatif in entrees:
             cible = f"{chemin}/{relatif}"
             if info.is_dir():
-                creer_dossier_distant(sftp, cible)
+                creer_dossier(cible)
                 continue
             # Le dossier parent du fichier est créé une seule fois
-            dossier = posixpath.dirname(cible)
+            dossier = os.path.dirname(cible)
             if dossier not in dossiers_crees:
-                creer_dossier_distant(sftp, dossier)
+                creer_dossier(dossier)
                 dossiers_crees.add(dossier)
-            with archive.open(info) as source:
-                sftp.putfo(source, cible)
-    except (paramiko.SSHException, OSError) as erreur_envoi:
+            with archive.open(info) as source, open(cible, "wb") as destination:
+                shutil.copyfileobj(source, destination)
+    except OSError as erreur_envoi:
         # On nettoie le dataset à moitié envoyé, pour pouvoir réessayer
         try:
-            supprimer_dossier_distant(sftp, chemin)
-        except (paramiko.SSHException, OSError):
+            supprimer_dossier(chemin)
+        except OSError:
             pass
         return False, f"L'envoi a échoué : {erreur_envoi}", None
 

@@ -15,7 +15,7 @@ from pymongo.errors import DuplicateKeyError
 
 from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif
-from modules.datasets.sftp import DATASETS_REMOTE_PATH
+from modules.datasets.chemins import DATASETS_PATH
 from modules.db_mongo import get_users_collection
 from modules.comptes.user_import import ROLES
 from modules.comptes.users import (
@@ -201,7 +201,7 @@ def render_accounts(users) -> None:
     if datasets_actuels:
         st.text(
             "\n".join(
-                chemin_relatif(DATASETS_REMOTE_PATH, chemin)
+                chemin_relatif(DATASETS_PATH, chemin)
                 for chemin in sorted(datasets_actuels)
             )
         )
@@ -243,7 +243,7 @@ def render_accounts(users) -> None:
     st.write("Datasets autorisés")
     deja_autorises = selected_user.get("datasets_access", [])
     prefixe_dataset = f"edit_dataset_{uid}_"
-    afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, deja_autorises)
+    afficher_arborescence_datasets(DATASETS_PATH, prefixe_dataset, deja_autorises)
 
     # Le bouton est en dernière position, sous les datasets.
     modifier_submit = st.button(

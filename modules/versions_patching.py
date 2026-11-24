@@ -1,5 +1,5 @@
 """
-modules/version_patching.py
+modules/versions_patching.py
 
 Lecture des versions préparées (patches) d'un dataset, et calculs liés au
 patching des cubes HSI.
@@ -7,7 +7,7 @@ patching des cubes HSI.
 Les patches sont rangés dans le dataset lui-même, dans le dossier
 hsi_data_patching (voir scripts_serveur/data_utils.py) :
 
-    <dataset>/hsi-data-patching/HSI/csv_for_dataloader/{train,test,val}/{format}/
+    <dataset>/hsi_data_patching/HSI/csv_for_dataloader/{train,test,val}/{format}/
 
 Une version est un format, par exemple w100_h100_sl50_sc80. Un split est
 patché pour un format quand le CSV à 100 % existe, par exemple :
@@ -17,16 +17,15 @@ patché pour un format quand le CSV à 100 % existe, par exemple :
 C'est le dernier fichier écrit par le patching : 
 s'il est là, le split est complet.
 
-Comme le package modules/datasets, ce module n'importe jamais Streamlit et réutilise la
-connexion SFTP partagée de modules/datasets/sftp.py.
+Comme le package modules/datasets, ce module n'importe jamais Streamlit et
+lit directement le disque du serveur.
 """
 
+import os
 import re
 from datetime import datetime
 
-import paramiko
-
-from modules.datasets.sftp import lister_noms, obtenir_sftp
+from modules.datasets.chemins import lister_noms
 from modules.datasets.stats import SPLITS
 
 # Dossier des patches, à l'intérieur du dataset (même nom que dans data_utils.py)
@@ -39,12 +38,12 @@ MOTIF_FORMAT = re.compile(r"^w\d+_h\d+_sl\d+_sc\d+$")
 
 
 # ---------------------------------------------------------------------------
-# Lecture des versions préparées (accès au serveur)
+# Lecture des versions préparées (accès au disque)
 # ---------------------------------------------------------------------------
 
 
 def chemin_patching(chemin_dataset: str) -> str:
-    """Renvoie le dossier hsi-data-patching d'un dataset."""
+    """Renvoie le dossier hsi_data_patching d'un dataset."""
     return f"{chemin_dataset.rstrip('/')}/{NOM_DOSSIER_PATCHING}"
 
 
@@ -63,15 +62,15 @@ def chemin_marqueur(chemin_dataset: str, split: str, nom_format: str) -> str:
     return f"{dossier}/100%_{nom_split}_{nom_format}.csv"
 
 
-def date_modification(sftp, chemin: str):
-    """Renvoie la date de modification d'un fichier distant, ou None s'il n'existe pas."""
+def date_modification(chemin: str):
+    """Renvoie la date de modification d'un fichier, ou None s'il n'existe pas."""
     try:
-        return sftp.stat(chemin).st_mtime
-    except IOError:
+        return os.path.getmtime(chemin)
+    except OSError:
         return None
 
 
-def lister_fractions(sftp, chemin_dataset: str, split: str, nom_format: str) -> list:
+def lister_fractions(chemin_dataset: str, split: str, nom_format: str) -> list:
     """
     Renvoie les fractions de CSV (en %) présentes pour un split et un format,
     triées par ordre croissant, par exemple [10, 20, 50, 100].
@@ -87,9 +86,8 @@ def lister_fractions(sftp, chemin_dataset: str, split: str, nom_format: str) -> 
     # Le nom du format ne contient que des lettres, des chiffres et "_" :
     # il peut être inséré tel quel dans le motif
     motif = re.compile(rf"^(\d+)%_{nom_split}_{nom_format}\.csv$")
-    try:
-        noms = sftp.listdir(dossier)
-    except IOError:
+    noms = lister_noms(dossier)
+    if noms is None:
         return []
 
     fractions = []
@@ -113,15 +111,7 @@ def lister_versions(chemin_dataset: str) -> list:
 
     Un format dont aucun split n'a son CSV à 100 % n'est pas listé (patching
     interrompu). La liste est vide si le dataset n'a pas encore de patches.
-
-    Lève ConnectionError si le serveur est injoignable : c'est à
-    l'interface d'afficher un message dans ce cas.
     """
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        raise ConnectionError("Serveur injoignable")
-
     racine = chemin_patching(chemin_dataset)
 
     # Pour chaque format trouvé : pour chaque split prêt, la date du CSV
@@ -129,14 +119,14 @@ def lister_versions(chemin_dataset: str) -> list:
     formats = {}
     for split in SPLITS:
         dossier_split = f"{racine}/HSI/csv_for_dataloader/{split.lower()}"
-        for nom_format in lister_noms(sftp, dossier_split) or []:
+        for nom_format in lister_noms(dossier_split) or []:
             if not MOTIF_FORMAT.match(nom_format):
                 continue
-            date = date_modification(sftp, chemin_marqueur(chemin_dataset, split, nom_format))
+            date = date_modification(chemin_marqueur(chemin_dataset, split, nom_format))
             if date is not None:
                 formats.setdefault(nom_format, {})[split] = {
                     "date": date,
-                    "fractions": lister_fractions(sftp, chemin_dataset, split, nom_format),
+                    "fractions": lister_fractions(chemin_dataset, split, nom_format),
                 }
 
     versions = []

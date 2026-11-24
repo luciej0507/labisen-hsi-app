@@ -14,7 +14,7 @@ import streamlit as st
 from pymongo.errors import DuplicateKeyError
 
 from modules.comptes.auth import require_role
-from modules.datasets.sftp import DATASETS_REMOTE_PATH
+from modules.datasets.chemins import DATASETS_PATH
 from modules.db_mongo import get_users_collection
 from modules.comptes.user_import import (
     ACTION_CREATE,
@@ -122,7 +122,7 @@ def render_add_single(users) -> None:
     # Sélection des datasets, aucun n'est coché au départ.
     st.write("Datasets autorisés")
     prefixe_dataset = f"ajout_dataset_{fid}_"
-    afficher_arborescence_datasets(DATASETS_REMOTE_PATH, prefixe_dataset, [])
+    afficher_arborescence_datasets(DATASETS_PATH, prefixe_dataset, [])
 
     # Le bouton est en dernière position, sous les datasets.
     if not st.button("Créer le compte", type="primary", key=f"ajout_submit_{fid}"):

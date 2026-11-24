@@ -6,16 +6,14 @@ images RGB, fichiers manquants, état du split Train/Test/Val et liste des
 tâches restant à faire. Contient aussi la lecture des cubes et de leurs
 dimensions.
 
-Les fonctions de ce module lisent le serveur via la connexion partagée
-de sftp.py. etat_split, tache_split et tache_manquants n'ont aucune
-dépendance réseau.
+Les fonctions de ce module lisent directement le disque du serveur (voir
+chemins.py). etat_split, tache_split et tache_manquants n'accèdent pas au
+disque : ils travaillent sur des nombres déjà calculés.
 
 Ce module n'importe jamais Streamlit.
 """
 
-import paramiko
-
-from modules.datasets.sftp import obtenir_sftp, lister_noms, trouver, resoudre
+from modules.datasets.chemins import lister_noms, trouver, resoudre
 
 # Les trois splits attendus dans un dataset (voir la page Mode d'emploi)
 SPLITS = ["Train", "Test", "Val"]
@@ -26,16 +24,16 @@ SPLITS = ["Train", "Test", "Val"]
 ACCEPTER_ANNOTATION_A_PLAT = True
 
 
-def _bases(sftp, split_chemin, sous_chemin, extension):
+def _bases(split_chemin, sous_chemin, extension):
     """
     Renvoie l'ensemble des noms de base (sans l'extension) des fichiers
     d'un sous-dossier qui se terminent par `extension`.
     Ensemble vide si le sous-dossier n'existe pas.
     """
-    chemin = resoudre(sftp, split_chemin, sous_chemin)
+    chemin = resoudre(split_chemin, sous_chemin)
     if chemin is None:
         return set()
-    noms = lister_noms(sftp, chemin) or []
+    noms = lister_noms(chemin) or []
     return {
         nom[: -len(extension)]
         for nom in noms
@@ -43,18 +41,18 @@ def _bases(sftp, split_chemin, sous_chemin, extension):
     }
 
 
-def _stats_split(sftp, split_chemin):
+def _stats_split(split_chemin):
     """Calcule les stats d'UN split (Train, Test ou Val)."""
     # Un cube = un fichier .bil dans HSI/
-    cubes = _bases(sftp, split_chemin, "HSI", ".bil")
+    cubes = _bases(split_chemin, "HSI", ".bil")
     # Fichiers associés à chaque cube (même nom de base)
-    hdr = _bases(sftp, split_chemin, "HSI", ".bil.hdr")
+    hdr = _bases(split_chemin, "HSI", ".bil.hdr")
     # Les photos RGB (.png) sont directement dans le dossier RGB
-    rgb = _bases(sftp, split_chemin, "RGB", ".png")
-    ann_png = _bases(sftp, split_chemin, "Annotation/PNG", ".png")
+    rgb = _bases(split_chemin, "RGB", ".png")
+    ann_png = _bases(split_chemin, "Annotation/PNG", ".png")
     # Règle temporaire : on accepte aussi les masques directement dans Annotation/
     if ACCEPTER_ANNOTATION_A_PLAT:
-        ann_png = ann_png | _bases(sftp, split_chemin, "Annotation", ".png")
+        ann_png = ann_png | _bases(split_chemin, "Annotation", ".png")
 
     # Un cube est annoté si son masque png existe (même nom de base que le cube)
     annotes = cubes & ann_png
@@ -66,8 +64,8 @@ def _stats_split(sftp, split_chemin):
 
     # Ancienne structure : le dossier RGB contient encore des sous-dossiers
     # PNG ou TIFF au lieu des photos directement
-    chemin_rgb = resoudre(sftp, split_chemin, "RGB")
-    noms_rgb = (lister_noms(sftp, chemin_rgb) or []) if chemin_rgb else []
+    chemin_rgb = resoudre(split_chemin, "RGB")
+    noms_rgb = (lister_noms(chemin_rgb) or []) if chemin_rgb else []
     ancienne_structure = any(nom.lower() in ("png", "tiff") for nom in noms_rgb)
 
     # Un cube a tous ses fichiers hors annotation s'il est dans les 3 ensembles.
@@ -190,11 +188,10 @@ def tache_manquants(libelle: str, manquants_par_split: dict):
 
 def calculer_stats(chemin_dataset: str) -> dict:
     """
-    Calcule les stats d'un dataset à partir de sa structure sur le serveur.
+    Calcule les stats d'un dataset à partir de sa structure sur le disque.
 
-    Utilise la connexion SFTP partagée (voir sftp.obtenir_sftp).
     Renvoie un dictionnaire avec les clés :
-      - "etat" : "Serveur injoignable", "Introuvable", "Non conforme",
+      - "etat" : "Introuvable" (dossier absent ou illisible), "Non conforme",
         "À compléter" (il reste des tâches) ou "Complet"
       - "taches" : liste de textes décrivant tout ce qui reste à faire pour
         que le dataset soit complet (vide si "Complet")
@@ -203,13 +200,8 @@ def calculer_stats(chemin_dataset: str) -> dict:
       - "total_cubes", "annotes", "rgb", "incomplets" : totaux sur tous
         les splits
     """
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        return _resultat("Serveur injoignable")
-
     splits = {}
-    racine = lister_noms(sftp, chemin_dataset)
+    racine = lister_noms(chemin_dataset)
     if racine is None:
         return _resultat("Introuvable")
 
@@ -218,7 +210,7 @@ def calculer_stats(chemin_dataset: str) -> dict:
         reel = trouver(racine, split)
         if reel is not None:
             chemin_split = f"{chemin_dataset.rstrip('/')}/{reel}"
-            splits[split] = _stats_split(sftp, chemin_split)
+            splits[split] = _stats_split(chemin_split)
 
     resultat = _resultat("", splits)
 
@@ -257,12 +249,12 @@ def calculer_stats(chemin_dataset: str) -> dict:
     return resultat
 
 
-def _chemin_split(sftp, chemin_dataset: str, split: str):
+def _chemin_split(chemin_dataset: str, split: str):
     """
     Renvoie le vrai chemin du dossier d'un split (Train, Test ou Val),
     sans tenir compte de la casse, ou None s'il n'existe pas.
     """
-    racine = lister_noms(sftp, chemin_dataset)
+    racine = lister_noms(chemin_dataset)
     if racine is None:
         return None
     reel = trouver(racine, split)
@@ -276,19 +268,14 @@ def lister_cubes(chemin_dataset: str, split: str) -> list:
     Liste les cubes HSI d'un split (un cube = un fichier .bil dans HSI/).
 
     Renvoie les noms de base (sans l'extension), triés par ordre alphabétique.
-    Renvoie une liste vide si le serveur est injoignable ou si le split
+    Renvoie une liste vide si le dataset est illisible ou si le split
     n'existe pas : c'est à l'interface d'afficher un message dans ce cas.
     """
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        return []
-
-    chemin_split = _chemin_split(sftp, chemin_dataset, split)
+    chemin_split = _chemin_split(chemin_dataset, split)
     if chemin_split is None:
         return []
 
-    return sorted(_bases(sftp, chemin_split, "HSI", ".bil"))
+    return sorted(_bases(chemin_split, "HSI", ".bil"))
 
 
 def lire_dimensions(chemin_dataset: str, split: str, nom_cube: str) -> dict:
@@ -298,22 +285,17 @@ def lire_dimensions(chemin_dataset: str, split: str, nom_cube: str) -> dict:
     Renvoie {"lignes": int, "colonnes": int, "bandes": int}, ou None si
     le fichier est introuvable ou illisible.
     """
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        return None
-
-    chemin_split = _chemin_split(sftp, chemin_dataset, split)
+    chemin_split = _chemin_split(chemin_dataset, split)
     if chemin_split is None:
         return None
-    chemin_hsi = resoudre(sftp, chemin_split, "HSI")
+    chemin_hsi = resoudre(chemin_split, "HSI")
     if chemin_hsi is None:
         return None
 
     # Fichier d'en-tête du cube, recherché sans tenir compte de la casse
     voulu = f"{nom_cube}.bil.hdr".lower()
     nom_hdr = None
-    for nom in lister_noms(sftp, chemin_hsi) or []:
+    for nom in lister_noms(chemin_hsi) or []:
         if nom.lower() == voulu:
             nom_hdr = nom
             break
@@ -322,9 +304,11 @@ def lire_dimensions(chemin_dataset: str, split: str, nom_cube: str) -> dict:
 
     # Lecture du texte de l'en-tête
     try:
-        with sftp.open(f"{chemin_hsi.rstrip('/')}/{nom_hdr}", "r") as fichier:
-            texte = fichier.read().decode("utf-8", errors="ignore")
-    except IOError:
+        with open(
+            f"{chemin_hsi.rstrip('/')}/{nom_hdr}", encoding="utf-8", errors="ignore"
+        ) as fichier:
+            texte = fichier.read()
+    except OSError:
         return None
 
     # Les lignes de l'en-tête ont la forme "cle = valeur"

@@ -1,9 +1,9 @@
 """
 tests/datasets/test_upload.py : tests de modules/datasets/upload.py
 
-Les archives zip sont fabriquées en mémoire (fixture fabriquer_zip) et le
-serveur est un faux serveur SFTP en mémoire (voir conftest.py). La base est
-une fausse collection mongomock (fixture users).
+Les archives zip sont fabriquées en mémoire (fixture fabriquer_zip) et les
+datasets sont écrits dans un dossier temporaire (fixture disque, voir
+conftest.py). La base est une fausse collection mongomock (fixture users).
 """
 
 import io
@@ -16,9 +16,9 @@ from modules.datasets import upload
 
 
 @pytest.fixture(autouse=True)
-def racine_de_test(monkeypatch):
-    """Racine des datasets fixée à /data pour tous les tests de ce fichier."""
-    monkeypatch.setattr(upload, "DATASETS_REMOTE_PATH", "/data")
+def racine_de_test(monkeypatch, disque):
+    """Racine des datasets fixée à /data (sur le faux disque) pour tous les tests."""
+    monkeypatch.setattr(upload, "DATASETS_PATH", disque.chemin("/data"))
 
 
 def _archive_factice(noms):
@@ -49,17 +49,18 @@ def test_nom_valide_refuse(nom):
 # ---------------------------------------------------- chemins utilisateur
 
 
-def test_dossier_utilisateur():
-    assert upload.dossier_utilisateur("alice") == "/data/alice"
+def test_dossier_utilisateur(disque):
+    assert upload.dossier_utilisateur("alice") == disque.chemin("/data/alice")
 
 
-def test_dossier_utilisateur_racine_avec_slash_final(monkeypatch):
-    monkeypatch.setattr(upload, "DATASETS_REMOTE_PATH", "/data/")
-    assert upload.dossier_utilisateur("alice") == "/data/alice"
+def test_dossier_utilisateur_racine_avec_slash_final(monkeypatch, disque):
+    monkeypatch.setattr(upload, "DATASETS_PATH", disque.chemin("/data/"))
+    assert upload.dossier_utilisateur("alice") == disque.chemin("/data/alice")
 
 
-def test_chemin_dataset_utilisateur():
-    assert upload.chemin_dataset_utilisateur("alice", "ds1") == "/data/alice/ds1"
+def test_chemin_dataset_utilisateur(disque):
+    chemin = upload.chemin_dataset_utilisateur("alice", "ds1")
+    assert chemin == disque.chemin("/data/alice/ds1")
 
 
 # ----------------------------------------------------- ajouter_dataset_acces
@@ -94,32 +95,32 @@ def test_ajouter_dataset_acces_utilisateur_inconnu(users):
     assert users.count_documents({}) == 0
 
 
-# ------------------------------------------------------ dossiers distants
+# ------------------------------------------------------------- dossiers
 
 
-def test_creer_dossier_distant_cree_les_parents(faux_sftp):
-    upload.creer_dossier_distant(faux_sftp, "/a/b/c")
-    assert {"/a", "/a/b", "/a/b/c"} <= faux_sftp.dossiers
+def test_creer_dossier_cree_les_parents(disque):
+    upload.creer_dossier(disque.chemin("/a/b/c"))
+    assert {"/a", "/a/b", "/a/b/c"} <= disque.dossiers
 
 
-def test_creer_dossier_distant_deja_existant(faux_sftp):
-    faux_sftp.ajouter_fichier("/a/b/fichier.txt", b"x")
+def test_creer_dossier_deja_existant(disque):
+    disque.ajouter_fichier("/a/b/fichier.txt", b"x")
     # Pas d'erreur, et le contenu existant n'est pas touché
-    upload.creer_dossier_distant(faux_sftp, "/a/b")
-    assert faux_sftp.fichiers["/a/b/fichier.txt"] == b"x"
+    upload.creer_dossier(disque.chemin("/a/b"))
+    assert disque.fichiers["/a/b/fichier.txt"] == b"x"
 
 
-def test_supprimer_dossier_distant_recursif(faux_sftp):
-    faux_sftp.ajouter_fichier("/x/g.txt")
-    faux_sftp.ajouter_fichier("/x/sous/dossier/f.txt")
-    faux_sftp.ajouter_fichier("/autre/garde.txt")
+def test_supprimer_dossier_recursif(disque):
+    disque.ajouter_fichier("/x/g.txt")
+    disque.ajouter_fichier("/x/sous/dossier/f.txt")
+    disque.ajouter_fichier("/autre/garde.txt")
 
-    upload.supprimer_dossier_distant(faux_sftp, "/x")
+    upload.supprimer_dossier(disque.chemin("/x"))
 
-    assert "/x" not in faux_sftp.dossiers
-    assert not any(f.startswith("/x/") for f in faux_sftp.fichiers)
+    assert "/x" not in disque.dossiers
+    assert not any(f.startswith("/x/") for f in disque.fichiers)
     # Un dossier voisin n'est pas touché
-    assert "/autre/garde.txt" in faux_sftp.fichiers
+    assert "/autre/garde.txt" in disque.fichiers
 
 
 # ------------------------------------------------------- _preparer_entrees
@@ -199,55 +200,55 @@ def test_preparer_entrees_refuse_les_chemins_dangereux(chemin_dangereux):
 # ------------------------------------------------------------ envoyer_zip
 
 
-def test_envoyer_zip_succes(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_succes(disque, fabriquer_zip):
     fichier = fabriquer_zip(
         {"Train/HSI/a.bil": b"cube", "Train/HSI/a.bil.hdr": b"entete"}
     )
     succes, message, chemin = upload.envoyer_zip(fichier, "alice", "ds1")
 
     assert succes is True
-    assert chemin == "/data/alice/ds1"
+    assert chemin == disque.chemin("/data/alice/ds1")
     assert "ds1" in message
     assert "2 éléments" in message
-    assert brancher_sftp.fichiers["/data/alice/ds1/Train/HSI/a.bil"] == b"cube"
-    assert brancher_sftp.fichiers["/data/alice/ds1/Train/HSI/a.bil.hdr"] == b"entete"
+    assert disque.fichiers["/data/alice/ds1/Train/HSI/a.bil"] == b"cube"
+    assert disque.fichiers["/data/alice/ds1/Train/HSI/a.bil.hdr"] == b"entete"
 
 
-def test_envoyer_zip_cree_les_dossiers_de_l_archive(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_cree_les_dossiers_de_l_archive(disque, fabriquer_zip):
     fichier = fabriquer_zip({}, dossiers=["Train", "Train/HSI"])
     # Une archive qui ne contient que des dossiers est acceptée
     succes, _, _ = upload.envoyer_zip(fichier, "alice", "ds1")
     assert succes is True
-    assert "/data/alice/ds1/Train/HSI" in brancher_sftp.dossiers
+    assert "/data/alice/ds1/Train/HSI" in disque.dossiers
 
 
-def test_envoyer_zip_retire_le_dossier_englobant(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_retire_le_dossier_englobant(disque, fabriquer_zip):
     fichier = fabriquer_zip({"mon_ds/Train/a.bil": b"cube"})
     succes, _, _ = upload.envoyer_zip(fichier, "alice", "ds1")
     assert succes is True
-    assert "/data/alice/ds1/Train/a.bil" in brancher_sftp.fichiers
+    assert "/data/alice/ds1/Train/a.bil" in disque.fichiers
 
 
-def test_envoyer_zip_nom_de_dataset_invalide(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_nom_de_dataset_invalide(disque, fabriquer_zip):
     fichier = fabriquer_zip({"Train/a.bil": b""})
     succes, message, chemin = upload.envoyer_zip(fichier, "alice", "../x")
     assert succes is False
     assert chemin is None
     assert message.startswith("Nom invalide")
     # Rien n'a été écrit sur le serveur
-    assert brancher_sftp.fichiers == {}
+    assert disque.fichiers == {}
 
 
-def test_envoyer_zip_nom_d_utilisateur_invalide(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_nom_d_utilisateur_invalide(disque, fabriquer_zip):
     fichier = fabriquer_zip({"Train/a.bil": b""})
     succes, message, chemin = upload.envoyer_zip(fichier, "al/ice", "ds1")
     assert succes is False
     assert chemin is None
     assert message == "Le nom d'utilisateur ne peut pas servir de nom de dossier."
-    assert brancher_sftp.fichiers == {}
+    assert disque.fichiers == {}
 
 
-def test_envoyer_zip_fichier_non_zip(brancher_sftp):
+def test_envoyer_zip_fichier_non_zip(disque):
     succes, message, chemin = upload.envoyer_zip(
         io.BytesIO(b"ceci n'est pas un zip"), "alice", "ds1"
     )
@@ -256,14 +257,14 @@ def test_envoyer_zip_fichier_non_zip(brancher_sftp):
     assert message == "Le fichier n'est pas une archive zip valide."
 
 
-def test_envoyer_zip_archive_vide(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_archive_vide(disque, fabriquer_zip):
     succes, message, chemin = upload.envoyer_zip(fabriquer_zip({}), "alice", "ds1")
     assert succes is False
     assert chemin is None
     assert message == "L'archive est vide."
 
 
-def test_envoyer_zip_archive_suspecte_rien_n_est_ecrit(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_archive_suspecte_rien_n_est_ecrit(disque, fabriquer_zip):
     # Le contrôle de l'archive se fait avant tout envoi
     fichier = fabriquer_zip({"Train/a.bil": b"cube", "../evil.txt": b"danger"})
     succes, message, chemin = upload.envoyer_zip(fichier, "alice", "ds1")
@@ -271,20 +272,12 @@ def test_envoyer_zip_archive_suspecte_rien_n_est_ecrit(brancher_sftp, fabriquer_
     assert succes is False
     assert chemin is None
     assert "chemin non autorisé" in message
-    assert brancher_sftp.fichiers == {}
-    assert "/data" not in brancher_sftp.dossiers
+    assert disque.fichiers == {}
+    assert "/data" not in disque.dossiers
 
 
-def test_envoyer_zip_serveur_injoignable(serveur_injoignable, fabriquer_zip):
-    fichier = fabriquer_zip({"Train/a.bil": b""})
-    succes, message, chemin = upload.envoyer_zip(fichier, "alice", "ds1")
-    assert succes is False
-    assert chemin is None
-    assert message == "Serveur injoignable. Réessayez dans un instant."
-
-
-def test_envoyer_zip_refuse_d_ecraser_un_dataset(brancher_sftp, fabriquer_zip):
-    brancher_sftp.ajouter_fichier("/data/alice/ds1/ancien.txt", b"ancien")
+def test_envoyer_zip_refuse_d_ecraser_un_dataset(disque, fabriquer_zip):
+    disque.ajouter_fichier("/data/alice/ds1/ancien.txt", b"ancien")
     fichier = fabriquer_zip({"Train/a.bil": b"nouveau"})
 
     succes, message, chemin = upload.envoyer_zip(fichier, "alice", "ds1")
@@ -293,13 +286,13 @@ def test_envoyer_zip_refuse_d_ecraser_un_dataset(brancher_sftp, fabriquer_zip):
     assert chemin is None
     assert message == "Un dataset portant ce nom existe déjà."
     # Le dataset existant est intact
-    assert brancher_sftp.fichiers["/data/alice/ds1/ancien.txt"] == b"ancien"
-    assert "/data/alice/ds1/Train/a.bil" not in brancher_sftp.fichiers
+    assert disque.fichiers["/data/alice/ds1/ancien.txt"] == b"ancien"
+    assert "/data/alice/ds1/Train/a.bil" not in disque.fichiers
 
 
-def test_envoyer_zip_nettoie_apres_une_erreur_d_envoi(brancher_sftp, fabriquer_zip):
+def test_envoyer_zip_nettoie_apres_une_erreur_d_envoi(disque, fabriquer_zip):
     # Le deuxième fichier échoue : le premier, déjà envoyé, doit disparaître
-    brancher_sftp.echec_envoi_de = "b.bil"
+    disque.echec_envoi_de = "b.bil"
     fichier = fabriquer_zip({"Train/a.bil": b"1", "Train/b.bil": b"2"})
 
     succes, message, chemin = upload.envoyer_zip(fichier, "alice", "ds1")
@@ -308,17 +301,17 @@ def test_envoyer_zip_nettoie_apres_une_erreur_d_envoi(brancher_sftp, fabriquer_z
     assert chemin is None
     assert message.startswith("L'envoi a échoué")
     assert "Coupure simulée" in message
-    assert "/data/alice/ds1" not in brancher_sftp.dossiers
-    assert not any(f.startswith("/data/alice/ds1") for f in brancher_sftp.fichiers)
+    assert "/data/alice/ds1" not in disque.dossiers
+    assert not any(f.startswith("/data/alice/ds1") for f in disque.fichiers)
 
 
-def test_envoyer_zip_peut_reessayer_apres_un_echec(brancher_sftp, fabriquer_zip):
-    brancher_sftp.echec_envoi_de = "b.bil"
+def test_envoyer_zip_peut_reessayer_apres_un_echec(disque, fabriquer_zip):
+    disque.echec_envoi_de = "b.bil"
     contenu = {"Train/a.bil": b"1", "Train/b.bil": b"2"}
     upload.envoyer_zip(fabriquer_zip(contenu), "alice", "ds1")
 
     # Le nettoyage permet de réessayer avec le même nom, une fois la panne passée
-    brancher_sftp.echec_envoi_de = None
+    disque.echec_envoi_de = None
     succes, _, _ = upload.envoyer_zip(fabriquer_zip(contenu), "alice", "ds1")
     assert succes is True
 
@@ -327,7 +320,7 @@ def test_envoyer_zip_peut_reessayer_apres_un_echec(brancher_sftp, fabriquer_zip)
 
 
 def test_ajouter_dataset_donne_l_acces_apres_un_succes(
-    users, creer_compte, brancher_sftp, fabriquer_zip
+    users, creer_compte, disque, fabriquer_zip
 ):
     creer_compte("alice")
     fichier = fabriquer_zip({"Train/a.bil": b"cube"})
@@ -337,11 +330,11 @@ def test_ajouter_dataset_donne_l_acces_apres_un_succes(
     assert succes is True
     assert "ds1" in message
     compte = users.find_one({"username": "alice"})
-    assert compte["datasets_access"] == ["/data/alice/ds1"]
+    assert compte["datasets_access"] == [disque.chemin("/data/alice/ds1")]
 
 
 def test_ajouter_dataset_pas_d_acces_si_l_envoi_echoue(
-    users, creer_compte, brancher_sftp, fabriquer_zip
+    users, creer_compte, disque, fabriquer_zip
 ):
     creer_compte("alice")
     fichier = fabriquer_zip({"Train/a.bil": b"cube"})
@@ -353,7 +346,7 @@ def test_ajouter_dataset_pas_d_acces_si_l_envoi_echoue(
 
 
 def test_ajouter_dataset_deux_fois_le_meme_nom(
-    users, creer_compte, brancher_sftp, fabriquer_zip
+    users, creer_compte, disque, fabriquer_zip
 ):
     creer_compte("alice")
     contenu = {"Train/a.bil": b"cube"}
@@ -365,4 +358,4 @@ def test_ajouter_dataset_deux_fois_le_meme_nom(
     assert succes is False
     assert message == "Un dataset portant ce nom existe déjà."
     compte = users.find_one({"username": "alice"})
-    assert compte["datasets_access"] == ["/data/alice/ds1"]
+    assert compte["datasets_access"] == [disque.chemin("/data/alice/ds1")]

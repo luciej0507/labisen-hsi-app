@@ -271,8 +271,8 @@ def lancer_entrainement_job(job: dict):
     if config["parametres_generaux"]["validation"]:
         csv["val"] = str(chemin_csv(dataset, "val", format_patches, fraction))
 
-    # En local (sans Docker), le worker démarre MLflow s'il n'est pas lancé.
-    # Avec Docker, MLflow aura son propre container et cette ligne disparaîtra.
+    # Le worker démarre MLflow s'il n'est pas lancé, sauf si MLFLOW_DEMARRAGE_AUTO
+    # vaut 0 dans le .env (MLflow est alors lancé à part, par exemple avec Docker).
     demarrer_mlflow()
 
     # Un dossier par entraînement
@@ -457,7 +457,8 @@ def arret_propre(numero_signal, cadre):
 
 def main():
     """Boucle principale du worker."""
-    # Les scripts sont désignés par des chemins relatifs à la racine du projet
+    # Par sécurité, on travaille depuis la racine du projet (les chemins des
+    # scripts et des fichiers de suivi sont déjà absolus, voir modules/config.py)
     os.chdir(RACINE_PROJET)
     signal.signal(signal.SIGTERM, arret_propre)
 
