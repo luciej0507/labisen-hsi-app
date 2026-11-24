@@ -25,6 +25,10 @@ from modules.apprentissage.gestion_entrainement import (
     oublier_run,
 )
 from ui.apprentissage import etat
+from ui.apprentissage.alerte_service import (
+    afficher_alerte_service_arrete,
+    service_calcul_actif,
+)
 from ui.apprentissage.styles import (
     TEINTES,
     css_blocs_parametrage,
@@ -75,18 +79,14 @@ def section_serveur():
         gpus = releve["gpus"]
 
         if not releve["worker_actif"]:
-            st.error(
-                "Le worker ne répond pas : l'état des GPU est inconnu et "
-                "l'entraînement ne pourra pas démarrer. Lancez-le avec "
-                "« python worker.py », puis actualisez."
-            )
+            afficher_alerte_service_arrete("lancement_entrainement")
             st.button("Actualiser l'état des GPU", key="gpu_actualiser_worker")
             return None
 
         if not gpus:
             st.error(
-                "Aucun GPU détecté : la commande nvidia-smi n'a rien renvoyé "
-                "sur la machine du worker."
+                "Aucun GPU n'a été détecté sur la machine qui exécute les "
+                "calculs. Prévenez l'administrateur de la plateforme."
             )
             st.button("Actualiser l'état des GPU", key="gpu_actualiser_vide")
             return None
@@ -172,7 +172,12 @@ def suivi_entrainement(etait_actif):
     statut = run["statut"]
 
     # --- Message d'état ---
-    if etat_run == "demarrage":
+    if run["en_attente"]:
+        st.info(
+            "En attente de démarrage : la demande est enregistrée, "
+            "l'entraînement démarrera dès que le service de calcul sera libre."
+        )
+    elif etat_run == "demarrage":
         st.info("Démarrage : chargement des bibliothèques, des données et du modèle...")
     elif etat_run == "en_cours":
         st.info("Entraînement en cours.")
@@ -185,6 +190,15 @@ def suivi_entrainement(etait_actif):
             "Le processus s'est arrêté de façon inattendue. Consultez le journal."
         )
         st.error(f"Entraînement en erreur : {message}")
+
+    # Si le service de calcul est arrêté, rien ne va avancer : on prévient
+    if actif and not service_calcul_actif():
+        afficher_alerte_service_arrete("attente" if run["en_attente"] else "en_cours")
+    if actif and run["arret_demande"]:
+        st.info(
+            "Arrêt demandé : le service de calcul arrête l'entraînement, "
+            "cela peut prendre quelques secondes."
+        )
 
     # --- Progression ---
     total = statut.get("total_epochs")
@@ -203,7 +217,9 @@ def suivi_entrainement(etait_actif):
     # --- Lien MLflow et boutons ---
     st.link_button("Ouvrir le suivi dans MLflow", url_mlflow(statut))
     if actif:
-        boutons_arret()
+        # Une fois l'arrêt demandé, le bouton d'arrêt n'a plus lieu d'être
+        if not run["arret_demande"]:
+            boutons_arret()
     elif st.button("Nouvel entraînement", type="primary"):
         oublier_run()
         st.rerun()

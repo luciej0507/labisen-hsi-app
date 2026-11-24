@@ -30,6 +30,10 @@ from modules.apprentissage.etape_patching import (
 )
 from modules.apprentissage.formats import formater_nombre
 from ui.apprentissage import etat
+from ui.apprentissage.alerte_service import (
+    afficher_alerte_service_arrete,
+    service_calcul_actif,
+)
 from ui.apprentissage.cache import dimensions_du_dataset, versions_du_dataset
 
 # Intervalle (en secondes) de rafraîchissement de l'avancement du patching
@@ -267,12 +271,28 @@ def fragment_suivi(chemin_dataset):
     # Tant que le script démarre, le total est inconnu (0)
     fraction = faits / total if total else 0.0
     texte = f"{faits}/{total} cubes" if total else "Préparation en cours..."
+    if suivi["en_attente"]:
+        texte = "En attente de démarrage..."
 
     st.markdown(f"Format(s) : **{suivi['format'] or '...'}**")
     st.progress(fraction, text=texte)
     if suivi["cube_courant"]:
         st.caption(f"Cube en cours : {suivi['cube_courant']}")
-    bouton_annulation(chemin_dataset)
+
+    # Si le service de calcul est arrêté, on prévient : rien ne va avancer
+    if not service_calcul_actif():
+        afficher_alerte_service_arrete("attente" if suivi["en_attente"] else "en_cours")
+    elif suivi["en_attente"]:
+        st.caption(
+            "Un seul calcul est exécuté à la fois : le patching démarrera "
+            "dès que le service de calcul sera libre."
+        )
+
+    # Une fois l'arrêt demandé, le bouton d'annulation n'a plus lieu d'être
+    if suivi["arret_demande"]:
+        st.info("Arrêt demandé : cela peut prendre quelques secondes.")
+    else:
+        bouton_annulation(chemin_dataset)
 
 
 def section_suivi(chemin_dataset):
@@ -320,6 +340,8 @@ def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_a
             "Un patching est déjà en cours pour ce dataset : "
             "attendez sa fin ou annulez-le ci-dessus."
         )
+    elif not service_calcul_actif():
+        afficher_alerte_service_arrete("lancement_patching")
 
     # Désactivé s'il n'y a aucun cube à patcher, ou si un patching tourne déjà
     if not st.button(

@@ -132,3 +132,14 @@ def lire_etat_gpus(collection) -> dict:
         "worker_actif": worker_actif,
         "age_secondes": age,
     }
+
+
+def worker_est_actif(collection) -> bool:
+    """
+    Renvoie True si le worker est en vie.
+
+    Le worker publie l'état des GPU toutes les quelques secondes, même
+    quand il n'a aucun job à traiter. S'il n'a rien publié depuis
+    DELAI_WORKER_ACTIF secondes (ou jamais), il est arrêté ou en panne.
+    """
+    return lire_etat_gpus(collection)["worker_actif"]

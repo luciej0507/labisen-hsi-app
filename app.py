@@ -11,7 +11,7 @@ from modules.comptes.auth import is_logged_in
 from ui.topnav import render_footer, configurer_page, render_topnav
 
 # Doit être le premier appel Streamlit de la page.
-configurer_page("SpectraVision")
+configurer_page("SpectraLab.AI")
 
 # En-tête : logos, nom de l'appli, menu et bouton de connexion.
 render_topnav("Accueil")
