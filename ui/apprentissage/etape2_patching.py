@@ -27,6 +27,7 @@ from modules.apprentissage.etape_patching import (
     splits_restants_formats,
     trouver_version,
     version_utilisable,
+    worker_actif,
 )
 from modules.apprentissage.formats import formater_nombre
 from ui.apprentissage import etat
@@ -268,6 +269,15 @@ def fragment_suivi(chemin_dataset):
     fraction = faits / total if total else 0.0
     texte = f"{faits}/{total} cubes" if total else "Préparation en cours..."
 
+    # Patching en attente : si le worker ne répond pas, personne ne le démarrera
+    if suivi["en_attente"] and not worker_actif():
+        texte = "En attente du worker..."
+        st.warning(
+            "Le worker ne répond pas : le patching n'a pas démarré. Il "
+            "démarrera dès que le worker sera lancé (« python worker.py »). "
+            "Vous pouvez aussi l'annuler."
+        )
+
     st.markdown(f"Format(s) : **{suivi['format'] or '...'}**")
     st.progress(fraction, text=texte)
     if suivi["cube_courant"]:
@@ -319,6 +329,13 @@ def section_lancement(chemin_dataset, splits, formats, full_width, apercu, job_a
         st.info(
             "Un patching est déjà en cours pour ce dataset : "
             "attendez sa fin ou annulez-le ci-dessus."
+        )
+    elif not worker_actif():
+        # On prévient, mais on laisse lancer : le job attend dans la file
+        st.warning(
+            "Le worker ne répond pas. Vous pouvez lancer le patching : il "
+            "restera en attente et démarrera dès que le worker sera lancé "
+            "(« python worker.py »)."
         )
 
     # Désactivé s'il n'y a aucun cube à patcher, ou si un patching tourne déjà

@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from modules.config import DOSSIER_DONNEES_APP, RACINE_PROJET
+from modules import etat_gpus
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
 from modules.jobs import (
     EN_ATTENTE,
@@ -480,6 +481,18 @@ def etat_job(chemin_dataset):
         # Le message du script est plus précis que celui du worker
         "message": suivi.get("message") or job.get("message", ""),
     }
+
+
+def worker_actif() -> bool:
+    """
+    Indique si le worker répond.
+
+    Le worker publie régulièrement un signal de vie dans MongoDB (voir
+    modules/etat_gpus.py). Sans worker, un patching reste en attente : la
+    page peut alors prévenir l'utilisateur au lieu de ne rien afficher.
+    """
+    releve = etat_gpus.lire_etat_gpus(etat_gpus.get_etat_worker_collection())
+    return releve["worker_actif"]
 
 
 def lancer_patching(chemin_dataset, splits: list, noms_formats: list, full_width: bool,
