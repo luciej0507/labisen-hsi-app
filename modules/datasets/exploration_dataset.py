@@ -13,41 +13,32 @@ Ce module n'importe jamais Streamlit, pour rester cohérent avec
 modules/users.py et pouvoir être testé indépendamment de l'affichage.
 """
 
-import stat
-
-import paramiko
-
-from modules.datasets.sftp import obtenir_sftp
+import os
 
 
 def list_folder_contents(chemin: str) -> list:
     """
-    Liste le contenu d'UN SEUL niveau d'un dossier distant (sans entrer
-    dans les sous-dossiers).
+    Liste le contenu d'UN SEUL niveau d'un dossier (sans entrer dans les
+    sous-dossiers).
 
     Renvoie une liste de dictionnaires avec les clés "nom", "chemin" et
     "est_dossier", triée par ordre alphabétique (dossiers d'abord).
 
-    Renvoie une liste vide si la connexion échoue ou si le dossier est
-    inaccessible : c'est à l'interface d'afficher un message dans ce cas.
+    Renvoie une liste vide si le dossier est inaccessible : c'est à
+    l'interface d'afficher un message dans ce cas.
     """
-    try:
-        sftp = obtenir_sftp()
-    except (paramiko.SSHException, OSError):
-        return []
-
     elements = []
     try:
-        for entree in sftp.listdir_attr(chemin):
-            chemin_entree = f"{chemin.rstrip('/')}/{entree.filename}"
+        for entree in os.scandir(chemin):
+            chemin_entree = f"{chemin.rstrip('/')}/{entree.name}"
             elements.append(
                 {
-                    "nom": entree.filename,
+                    "nom": entree.name,
                     "chemin": chemin_entree,
-                    "est_dossier": stat.S_ISDIR(entree.st_mode),
+                    "est_dossier": entree.is_dir(),
                 }
             )
-    except IOError:
+    except OSError:
         elements = []
 
     # Tri alphabétique, dossiers d'abord, pour une lecture plus naturelle

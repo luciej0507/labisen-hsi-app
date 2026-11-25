@@ -2,8 +2,8 @@
 tests/datasets/test_exploration_dataset.py : tests de
 modules/datasets/exploration_dataset.py
 
-Le serveur est un faux serveur SFTP en mémoire (voir conftest.py) et la base
-est une fausse collection mongomock (fixture users).
+Les dossiers sont de vrais dossiers temporaires (fixture disque, voir
+conftest.py) et la base est une fausse collection mongomock (fixture users).
 """
 
 from modules.datasets import exploration_dataset as expl
@@ -12,50 +12,46 @@ from modules.datasets import exploration_dataset as expl
 # ------------------------------------------------------ list_folder_contents
 
 
-def test_list_folder_contents_dossiers_d_abord_puis_tri_alphabetique(brancher_sftp):
-    brancher_sftp.ajouter_fichier("/data/z.txt")
-    brancher_sftp.ajouter_fichier("/data/a.txt")
-    brancher_sftp.ajouter_dossier("/data/beta")
-    brancher_sftp.ajouter_dossier("/data/alpha")
+def test_list_folder_contents_dossiers_d_abord_puis_tri_alphabetique(disque):
+    disque.ajouter_fichier("/data/z.txt")
+    disque.ajouter_fichier("/data/a.txt")
+    disque.ajouter_dossier("/data/beta")
+    disque.ajouter_dossier("/data/alpha")
 
-    elements = expl.list_folder_contents("/data")
+    elements = expl.list_folder_contents(disque.chemin("/data"))
 
     assert [e["nom"] for e in elements] == ["alpha", "beta", "a.txt", "z.txt"]
     assert [e["est_dossier"] for e in elements] == [True, True, False, False]
 
 
-def test_list_folder_contents_renvoie_les_chemins_complets(brancher_sftp):
-    brancher_sftp.ajouter_dossier("/data/alpha")
-    elements = expl.list_folder_contents("/data")
+def test_list_folder_contents_renvoie_les_chemins_complets(disque):
+    disque.ajouter_dossier("/data/alpha")
+    elements = expl.list_folder_contents(disque.chemin("/data"))
     assert elements == [
-        {"nom": "alpha", "chemin": "/data/alpha", "est_dossier": True}
+        {"nom": "alpha", "chemin": disque.chemin("/data/alpha"), "est_dossier": True}
     ]
 
 
-def test_list_folder_contents_chemin_avec_slash_final(brancher_sftp):
-    brancher_sftp.ajouter_dossier("/data/alpha")
-    elements = expl.list_folder_contents("/data/")
-    assert elements[0]["chemin"] == "/data/alpha"
+def test_list_folder_contents_chemin_avec_slash_final(disque):
+    disque.ajouter_dossier("/data/alpha")
+    elements = expl.list_folder_contents(disque.chemin("/data/"))
+    assert elements[0]["chemin"] == disque.chemin("/data/alpha")
 
 
-def test_list_folder_contents_un_seul_niveau(brancher_sftp):
-    brancher_sftp.ajouter_fichier("/data/alpha/profond/fichier.txt")
-    elements = expl.list_folder_contents("/data")
+def test_list_folder_contents_un_seul_niveau(disque):
+    disque.ajouter_fichier("/data/alpha/profond/fichier.txt")
+    elements = expl.list_folder_contents(disque.chemin("/data"))
     # Seul le contenu direct est listé, pas les sous-dossiers
     assert [e["nom"] for e in elements] == ["alpha"]
 
 
-def test_list_folder_contents_dossier_vide(brancher_sftp):
-    brancher_sftp.ajouter_dossier("/data/vide")
-    assert expl.list_folder_contents("/data/vide") == []
+def test_list_folder_contents_dossier_vide(disque):
+    disque.ajouter_dossier("/data/vide")
+    assert expl.list_folder_contents(disque.chemin("/data/vide")) == []
 
 
-def test_list_folder_contents_dossier_inaccessible(brancher_sftp):
+def test_list_folder_contents_dossier_inaccessible(disque):
     assert expl.list_folder_contents("/nexiste/pas") == []
-
-
-def test_list_folder_contents_serveur_injoignable(serveur_injoignable):
-    assert expl.list_folder_contents("/data") == []
 
 
 # ------------------------------------------------ mettre_a_jour_selection

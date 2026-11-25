@@ -1,11 +1,11 @@
 # Documentation de la chaîne d'intégration continue (CI)
 
 Projet : application SpectraVision (LabISEN, imagerie hyperspectrale).
-Dernière mise à jour : 20/11/2026.
+Dernière mise à jour : 24/11/2026.
 
 ## 1. Objectif
 
-La chaîne d'intégration continue vérifie automatiquement, à chaque modification du code, que les tests passent. Elle s'exécute sur une machine vierge fournie par GitHub, sans fichier `.env`, sans serveur SFTP, sans base MongoDB réelle et sans GPU. Un test qui réussit dans ces conditions ne dépend donc pas de la machine du développeur.
+La chaîne d'intégration continue vérifie automatiquement, à chaque modification du code, que les tests passent. Elle s'exécute sur une machine vierge fournie par GitHub, sans fichier `.env`, sans les datasets du serveur, sans base MongoDB réelle et sans GPU. Un test qui réussit dans ces conditions ne dépend donc pas de la machine du développeur.
 
 ## 2. Outils et justification
 
@@ -57,7 +57,7 @@ Fichiers de dépendances :
 - `requirements.txt` : dépendances de l'application ;
 - `requirements-dev.txt` : inclut `requirements.txt`, puis ajoute `pytest`, `pytest-cov` et `mongomock`.
 
-Aucun secret n'est nécessaire à la CI. Les tests doivent rester indépendants du fichier `.env` : par exemple, `MODE_LOCAL` est forcé à `False` dans les tests du module SFTP.
+Aucun secret n'est nécessaire à la CI. Les tests doivent rester indépendants du fichier `.env` : par exemple, les tests des datasets travaillent dans des dossiers temporaires (fixture `disque`, basée sur `tmp_path`) et ne lisent jamais `DATASETS_PATH`, et les tests de `modules/config.py` ignorent le `.env`.
 
 ## 7. Procédure de test en local
 

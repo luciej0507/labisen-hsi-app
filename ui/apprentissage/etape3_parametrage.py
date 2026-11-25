@@ -182,11 +182,6 @@ def etape_parametrage():
     with st.spinner("Recherche des formats de patches disponibles..."):
         versions = versions_du_dataset(chemin_dataset)
 
-    # Serveur injoignable : on ne peut pas proposer de format de patches
-    if versions is None:
-        st.warning("Serveur injoignable : impossible de lire les formats de patches disponibles.")
-        return
-
     # Seuls les formats dont le split Train est patché peuvent être utilisés
     noms = list(libelles_versions(versions))
     utilisables = [n for n in noms if version_utilisable(trouver_version(versions, n))]

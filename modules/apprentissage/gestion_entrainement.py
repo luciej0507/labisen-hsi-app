@@ -28,7 +28,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
+from modules.config import (
+    DOSSIER_DONNEES_APP,
+    MLFLOW_DEMARRAGE_AUTO,
+    MLFLOW_URL_INTERNE,
+    RACINE_PROJET,
+)
 from modules.jobs import (
     ANNULE,
     EN_ATTENTE,
@@ -44,22 +51,21 @@ from modules.jobs import (
     masquer_job,
 )
 
-# Racine du projet (ce fichier est dans modules/apprentissage/)
-RACINE_PROJET = Path(__file__).resolve().parents[2]
-
 # Script d'entraînement (avec hsi_datamodule.py et dataloader_patches.py à côté)
 SCRIPT_ENTRAINEMENT = (
     RACINE_PROJET / "modules" / "apprentissage" / "entrainement" / "fastflow_mlflow.py"
 )
 
 # Dossier où sont rangés les runs, la base MLflow et ses artefacts
-DOSSIER_ENTRAINEMENTS = RACINE_PROJET / "entrainements"
+# (il se règle avec DOSSIER_DONNEES_APP dans le .env, voir modules/config.py)
+DOSSIER_ENTRAINEMENTS = DOSSIER_DONNEES_APP / "entrainements"
 DOSSIER_RUNS = DOSSIER_ENTRAINEMENTS / "runs"
 
-# Serveur MLflow local
-MLFLOW_HOTE = "127.0.0.1"
-MLFLOW_PORT = 5000
-MLFLOW_URI = f"http://{MLFLOW_HOTE}:{MLFLOW_PORT}"
+# Serveur MLflow : adresse utilisée par le worker et les scripts. Le lien
+# affiché à l'utilisateur est une autre adresse (MLFLOW_URL_PUBLIQUE).
+MLFLOW_URI = MLFLOW_URL_INTERNE
+MLFLOW_HOTE = urlparse(MLFLOW_URI).hostname or "127.0.0.1"
+MLFLOW_PORT = urlparse(MLFLOW_URI).port or 5000
 
 # Arborescence des CSV dans un dataset :
 # <dataset>/hsi_data_patching/HSI/csv_for_dataloader/<split>/<format>/<fraction>%_<split>_<format>.csv
@@ -100,8 +106,13 @@ def mlflow_actif() -> bool:
 
 
 def demarrer_mlflow():
-    """Démarre le serveur MLflow s'il n'est pas déjà lancé (il survit à l'application)."""
-    if mlflow_actif():
+    """
+    Démarre le serveur MLflow s'il n'est pas déjà lancé (il survit à l'application).
+
+    Ne fait rien si MLFLOW_DEMARRAGE_AUTO vaut 0 dans le .env : MLflow est
+    alors lancé à part (par exemple dans son propre container).
+    """
+    if not MLFLOW_DEMARRAGE_AUTO or mlflow_actif():
         return
 
     DOSSIER_ENTRAINEMENTS.mkdir(parents=True, exist_ok=True)

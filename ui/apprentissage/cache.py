@@ -33,7 +33,7 @@ def stats_du_dataset(chemin_dataset):
 
 @st.cache_data(ttl=DUREE_CACHE, show_spinner=False)
 def versions_du_dataset(chemin_dataset):
-    """Retourne les versions préparées d'un dataset, ou None si serveur injoignable."""
+    """Retourne les versions préparées d'un dataset (liste vide s'il n'y en a pas)."""
     return lire_versions(chemin_dataset)
 
 

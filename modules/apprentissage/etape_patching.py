@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from modules.config import DOSSIER_DONNEES_APP, RACINE_PROJET
+from modules import etat_gpus
 from modules.datasets.stats import SPLITS, lire_dimensions, lister_cubes
 from modules.jobs import (
     EN_ATTENTE,
@@ -39,8 +41,9 @@ TOUS_LES_SPLITS_RESTANTS = "Tous les splits restants"
 SPLIT_ENTRAINEMENT = "Train"
 
 # Catalogue fixe des formats de patches proposés à l'utilisateur. Le même
-# fichier est lu par data_utils.py au moment du patching.
-CONFIG_FORMATS = Path("config.yaml")
+# fichier est lu par data_utils.py au moment du patching. Chemin absolu :
+# il ne dépend pas du dossier depuis lequel l'application est lancée.
+CONFIG_FORMATS = RACINE_PROJET / "config.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +54,9 @@ CONFIG_FORMATS = Path("config.yaml")
 def lire_versions(chemin_dataset: str):
     """
     Renvoie les versions déjà préparées d'un dataset (liste vide s'il n'y
-    en a aucune), ou None si le serveur est injoignable.
+    en a aucune).
     """
-    try:
-        return lister_versions(chemin_dataset)
-    except ConnectionError:
-        return None
+    return lister_versions(chemin_dataset)
 
 
 def lignes_versions(versions: list) -> list:
@@ -270,8 +270,8 @@ def lire_dimensions_dataset(chemin_dataset: str) -> dict:
     Lit les dimensions de tous les cubes du dataset, une seule fois.
 
     Renvoie {split: {nom du cube: dimensions}}, où les dimensions valent
-    None si elles sont illisibles. Un split introuvable (ou un serveur
-    injoignable) donne un dictionnaire vide.
+    None si elles sont illisibles. Un split introuvable donne un
+    dictionnaire vide.
     """
     dimensions = {}
     for split in SPLITS:
@@ -374,11 +374,12 @@ def apercu_patching(dimensions_dataset: dict, versions: list, formats: list, spl
 
 # Script de patching et interpréteur Python qui le lance (utilisés par le
 # worker). L'interpréteur doit disposer de torch, spectral, pandas, etc.
-SCRIPT_PATCHING = Path("scripts_serveur/data_utils.py")
+SCRIPT_PATCHING = RACINE_PROJET / "scripts_serveur" / "data_utils.py"
 PYTHON_PATCHING = sys.executable
 
 # Dossier où sont écrits le fichier de suivi et le journal de chaque patching
-DOSSIER_SUIVI = Path("suivi_patching")
+# (il se règle avec DOSSIER_DONNEES_APP dans le .env, voir modules/config.py)
+DOSSIER_SUIVI = DOSSIER_DONNEES_APP / "suivi_patching"
 
 
 def base_fichiers_job(chemin_dataset) -> str:
@@ -480,6 +481,18 @@ def etat_job(chemin_dataset):
         # Le message du script est plus précis que celui du worker
         "message": suivi.get("message") or job.get("message", ""),
     }
+
+
+def worker_actif() -> bool:
+    """
+    Indique si le worker répond.
+
+    Le worker publie régulièrement un signal de vie dans MongoDB (voir
+    modules/etat_gpus.py). Sans worker, un patching reste en attente : la
+    page peut alors prévenir l'utilisateur au lieu de ne rien afficher.
+    """
+    releve = etat_gpus.lire_etat_gpus(etat_gpus.get_etat_worker_collection())
+    return releve["worker_actif"]
 
 
 def lancer_patching(chemin_dataset, splits: list, noms_formats: list, full_width: bool,

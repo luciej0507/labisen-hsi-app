@@ -11,5 +11,4 @@ fastapi
 uvicorn
 psutil
 requests
-paramiko
 pyyaml

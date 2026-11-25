@@ -13,7 +13,7 @@ import streamlit as st
 
 from modules.comptes.auth import require_role
 from modules.datasets.exploration_dataset import chemin_relatif, get_datasets_autorises
-from modules.datasets.sftp import DATASETS_REMOTE_PATH
+from modules.datasets.chemins import DATASETS_PATH
 from modules.datasets.stats import SPLITS, calculer_stats
 from modules.datasets.upload import ajouter_dataset, dossier_utilisateur
 from modules.db_mongo import get_users_collection
@@ -35,7 +35,6 @@ COULEURS_ETAT = {
     "À compléter": "orange",
     "Non conforme": "red",
     "Introuvable": "red",
-    "Serveur injoignable": "red",
 }
 
 # Style des cartes. Chaque conteneur créé avec une clé reçoit une classe CSS
@@ -68,15 +67,9 @@ div[class*="st-key-stats-"] {
 def stats_en_cache(chemin: str) -> dict:
     """
     Enveloppe Streamlit autour de calculer_stats : le résultat est gardé
-    5 minutes, pour ne pas interroger le serveur à chaque interaction.
-
-    Si le serveur est injoignable, on lève une exception : Streamlit ne met
-    pas en cache une exception, donc l'erreur ne reste pas affichée 5 minutes.
+    5 minutes, pour ne pas relire les dossiers à chaque interaction.
     """
-    stats = calculer_stats(chemin)
-    if stats["etat"] == "Serveur injoignable":
-        raise ConnectionError("Serveur injoignable")
-    return stats
+    return calculer_stats(chemin)
 
 
 def couleur_split(details: dict):
@@ -165,14 +158,7 @@ def afficher_carte(chemin: str) -> None:
     cle = hashlib.md5(chemin.encode("utf-8")).hexdigest()[:8]
 
     with st.container(border=True):
-        # Serveur injoignable : message sur cette carte uniquement
-        try:
-            stats = stats_en_cache(chemin)
-        except ConnectionError:
-            afficher_entete(nom, "Serveur injoignable", cle)
-            st.caption("Serveur injoignable. Cliquez sur Rafraîchir pour réessayer.")
-            return
-
+        stats = stats_en_cache(chemin)
         etat = stats["etat"]
         afficher_entete(nom, etat, cle)
 
@@ -229,7 +215,7 @@ def afficher_projet(parent: str, datasets: list, username: str) -> None:
       - racine du serveur (datasets attribués par l'admin) : "Bases attribuées"
       - tout autre dossier : son nom, avec son chemin en dessous
     """
-    racine = DATASETS_REMOTE_PATH.rstrip("/")
+    racine = DATASETS_PATH.rstrip("/")
     parent = parent.rstrip("/")
 
     if parent == racine:
@@ -240,7 +226,7 @@ def afficher_projet(parent: str, datasets: list, username: str) -> None:
     else:
         st.markdown("#### " + os.path.basename(parent))
         # Chemin complet du projet (relatif à la racine) pour lever toute ambiguïté
-        st.caption(chemin_relatif(DATASETS_REMOTE_PATH, parent))
+        st.caption(chemin_relatif(DATASETS_PATH, parent))
 
     # Une rangée de 3 colonnes à la fois : on passe à la suivante quand elle est pleine
     for debut in range(0, len(datasets), CARTES_PAR_RANGEE):

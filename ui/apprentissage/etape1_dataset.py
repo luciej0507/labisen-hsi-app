@@ -7,7 +7,7 @@ import streamlit as st
 
 from modules.apprentissage.formats import formater_splits
 from modules.datasets.exploration_dataset import chemin_relatif
-from modules.datasets.sftp import DATASETS_REMOTE_PATH
+from modules.datasets.chemins import DATASETS_PATH
 from ui.apprentissage import etat
 from ui.apprentissage.cache import datasets_complets, stats_du_dataset
 from ui.apprentissage.styles import STYLE_CARTES
@@ -28,7 +28,7 @@ def afficher_infos(chemin, cle):
     # datasets proposés sont à l'état Complet : le bandeau est toujours vert.
     with st.container(key=f"entete-green-{cle}"):
         colonne_nom, colonne_badge = st.columns([3, 2], vertical_alignment="center")
-        colonne_nom.markdown("**" + chemin_relatif(DATASETS_REMOTE_PATH, chemin) + "**")
+        colonne_nom.markdown("**" + chemin_relatif(DATASETS_PATH, chemin) + "**")
         colonne_badge.badge("Complet", color="green")
 
     # Deux espaces + retour = saut de ligne
@@ -139,7 +139,7 @@ def etape_dataset():
         st.caption("Aucune carte sélectionnée.")
     else:
         st.caption(
-            "Dataset sélectionné : " + chemin_relatif(DATASETS_REMOTE_PATH, selection)
+            "Dataset sélectionné : " + chemin_relatif(DATASETS_PATH, selection)
         )
 
     # Validation : changer de dataset alors qu'une version de patches est déjà

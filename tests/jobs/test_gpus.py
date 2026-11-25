@@ -18,7 +18,7 @@ from pymongo.errors import PyMongoError
 import worker
 from modules import etat_gpus
 from modules import jobs as file_jobs
-from modules.apprentissage import etape_lancement_suivi
+from modules.apprentissage import etape_lancement_suivi, etape_patching
 
 SORTIE_DEUX_GPU = "0, 12, 2048, 24576\n1, 87, 20480, 24576\n"
 
@@ -263,3 +263,18 @@ def test_le_worker_publie_pendant_la_surveillance_d_un_job(jobs, etat, releves, 
     worker.surveiller(jobs, job_id, processus)
 
     assert etat_gpus.lire_etat_gpus(etat)["gpus"] == GPUS
+
+
+def test_patching_worker_actif_sans_publication(etat, monkeypatch):
+    """Sans signal de vie du worker, la page du patching le considère absent."""
+    monkeypatch.setattr(etat_gpus, "get_etat_worker_collection", lambda: etat)
+
+    assert etape_patching.worker_actif() is False
+
+
+def test_patching_worker_actif_apres_publication(etat, monkeypatch):
+    """Dès que le worker publie son état, la page du patching le voit actif."""
+    monkeypatch.setattr(etat_gpus, "get_etat_worker_collection", lambda: etat)
+    etat_gpus.publier_etat_gpus(etat, GPUS)
+
+    assert etape_patching.worker_actif() is True

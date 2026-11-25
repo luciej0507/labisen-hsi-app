@@ -13,7 +13,7 @@ l'entraînement sont dans gestion_entrainement.py.
 
 from modules import etat_gpus
 from modules.apprentissage.etape_parametrage import TITRES_BLOCS, TYPES_APPRENTISSAGE
-from modules.apprentissage.gestion_entrainement import MLFLOW_URI
+from modules.config import MLFLOW_URL_PUBLIQUE
 
 # Titre du bloc de choix du GPU
 TITRE_BLOC_GPU = "Choix du GPU"
@@ -129,9 +129,14 @@ def etat_du_run(run: dict) -> str:
 
 
 def url_mlflow(statut: dict) -> str:
-    """Renvoie le lien vers le run dans MLflow (ou vers l'accueil tant que le run n'existe pas)."""
+    """
+    Renvoie le lien vers le run dans MLflow (ou vers l'accueil tant que le run n'existe pas).
+
+    Le lien est ouvert par le navigateur de l'utilisateur : il utilise donc
+    l'adresse publique de MLflow (MLFLOW_URL_PUBLIQUE), pas l'adresse interne.
+    """
     run_id = statut.get("run_id")
     experience = statut.get("experiment_id")
     if run_id and experience:
-        return f"{MLFLOW_URI}/#/experiments/{experience}/runs/{run_id}"
-    return MLFLOW_URI
+        return f"{MLFLOW_URL_PUBLIQUE}/#/experiments/{experience}/runs/{run_id}"
+    return MLFLOW_URL_PUBLIQUE
