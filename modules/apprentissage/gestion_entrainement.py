@@ -28,11 +28,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 
 from modules.config import (
-    DOSSIER_DONNEES_APP,
+    DOSSIER_ENTRAINEMENTS,
+    MLFLOW_BASE_DONNEES,
     MLFLOW_DEMARRAGE_AUTO,
+    MLFLOW_DOSSIER_ARTEFACTS,
+    MLFLOW_HOTE,
+    MLFLOW_JOURNAL_SERVEUR,
+    MLFLOW_PORT,
     MLFLOW_URL_INTERNE,
     RACINE_PROJET,
 )
@@ -56,16 +60,12 @@ SCRIPT_ENTRAINEMENT = (
     RACINE_PROJET / "modules" / "apprentissage" / "entrainement" / "fastflow_mlflow.py"
 )
 
-# Dossier où sont rangés les runs, la base MLflow et ses artefacts
-# (il se règle avec DOSSIER_DONNEES_APP dans le .env, voir modules/config.py)
-DOSSIER_ENTRAINEMENTS = DOSSIER_DONNEES_APP / "entrainements"
+# Dossier des runs (le dossier "entrainements" est défini dans modules/config.py)
 DOSSIER_RUNS = DOSSIER_ENTRAINEMENTS / "runs"
 
 # Serveur MLflow : adresse utilisée par le worker et les scripts. Le lien
 # affiché à l'utilisateur est une autre adresse (MLFLOW_URL_PUBLIQUE).
 MLFLOW_URI = MLFLOW_URL_INTERNE
-MLFLOW_HOTE = urlparse(MLFLOW_URI).hostname or "127.0.0.1"
-MLFLOW_PORT = urlparse(MLFLOW_URI).port or 5000
 
 # Arborescence des CSV dans un dataset :
 # <dataset>/hsi_data_patching/HSI/csv_for_dataloader/<split>/<format>/<fraction>%_<split>_<format>.csv
@@ -120,10 +120,10 @@ def demarrer_mlflow():
         sys.executable, "-m", "mlflow", "server",
         "--host", MLFLOW_HOTE,
         "--port", str(MLFLOW_PORT),
-        "--backend-store-uri", f"sqlite:///{DOSSIER_ENTRAINEMENTS / 'mlflow.db'}",
-        "--artifacts-destination", str(DOSSIER_ENTRAINEMENTS / "mlartifacts"),
+        "--backend-store-uri", f"sqlite:///{MLFLOW_BASE_DONNEES}",
+        "--artifacts-destination", str(MLFLOW_DOSSIER_ARTEFACTS),
     ]
-    with open(DOSSIER_ENTRAINEMENTS / "mlflow_server.log", "ab") as journal:
+    with open(MLFLOW_JOURNAL_SERVEUR, "ab") as journal:
         subprocess.Popen(
             commande,
             stdout=journal,

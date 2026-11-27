@@ -30,8 +30,8 @@ from lightning.pytorch.loggers import CSVLogger, MLFlowLogger
 
 from hsi_datamodule import HSIDataModule
 
-NOM_EXPERIENCE = "test_mlflow_streamlit_fastflow"
-NOM_MODELE_REGISTRY = "fastflow_streamlit"
+from modules.config import MLFLOW_NOM_MODELE_REGISTRY
+
 
 # Informations ajoutées à chaque écriture du statut : identifiants du run
 # MLflow (pour le lien dans Streamlit) et historique de la loss (pour la courbe)
@@ -171,12 +171,29 @@ def main():
         # --- MLflow : un seul run, ouvert avant l'entraînement ---
         # Ce run est utilisé à la fois par Lightning (métriques, hyperparamètres)
         # et par les appels mlflow.pytorch.log_model() dans EpochLogger.
+
+        # Un experiment par dataset : on prend le nom du dossier du dataset
+        nom_experience = Path(config["dataset"]).name
+        # Utilisateur qui a lancé l'entraînement (transmis par le worker)
+        utilisateur = config.get("utilisateur", "inconnu")
+        # Nom du run : modèle, utilisateur, date et heure
+        date_heure = datetime.now().strftime("%Y%m%d_%H%M")
+        nom_run = f"{config['modele'].lower()}_{utilisateur}_{date_heure}"
+
+        # Tags qui permettent de filtrer les runs dans MLflow
+        tags = {
+            "utilisateur": utilisateur,
+            "modele": config["modele"],
+            "dataset": nom_experience,
+        }
+
         mlflow.set_tracking_uri(config["mlflow_uri"])
-        mlflow.set_experiment(NOM_EXPERIENCE)
+        mlflow.set_experiment(nom_experience)
         mlflow_logger = MLFlowLogger(
-            experiment_name=NOM_EXPERIENCE,
+            experiment_name=nom_experience,
             tracking_uri=config["mlflow_uri"],
-            run_name=f"fastflow_{datetime.now().strftime('%Y%m%d_%H%M')}",
+            run_name=nom_run,
+            tags=tags,
         )
         mlflow.start_run(run_id=mlflow_logger.run_id)
 
@@ -222,7 +239,7 @@ def main():
             callbacks=[
                 checkpoint_callback,
                 EpochLogger(status_file, generaux["epochs"], checkpoint_callback,
-                            mlflow_logger, registered_model_name=NOM_MODELE_REGISTRY),
+                            mlflow_logger, registered_model_name=MLFLOW_NOM_MODELE_REGISTRY),
             ],
             limit_val_batches=1.0 if generaux["validation"] else 0,
             enable_progress_bar=False,  # garde le journal lisible dans Streamlit

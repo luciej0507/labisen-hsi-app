@@ -283,6 +283,8 @@ def lancer_entrainement_job(job: dict):
     contenu = {
         **config,
         "dataset": str(dataset),
+        # Utilisateur qui a lancé l'entraînement (lu dans le job MongoDB)
+        "utilisateur": job.get("utilisateur", "inconnu"),
         # Les chemins des patches dans les CSV sont relatifs à ce dossier
         "racine_patches": str(Path(dataset) / DOSSIER_PATCHING),
         "csv": csv,

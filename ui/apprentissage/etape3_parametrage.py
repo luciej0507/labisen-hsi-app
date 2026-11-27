@@ -26,6 +26,7 @@ from modules.apprentissage.etape_patching import (
     trouver_version,
     version_utilisable,
 )
+from modules.apprentissage.gestion_entrainement import oublier_run
 from ui.apprentissage import etat
 from ui.apprentissage.cache import versions_du_dataset
 from ui.apprentissage.styles import css_blocs_parametrage
@@ -160,6 +161,12 @@ def section_donnees(type_apprentissage, utilisables):
 def section_validation(config):
     """Valide la configuration au clic."""
     if st.button("Valider la configuration", type="primary"):
+        # Un nouveau paramétrage commence : on retire de l'écran de suivi
+        # l'ancien entraînement terminé, arrêté ou en erreur.
+        # Son job et ses fichiers sont conservés. Sans effet si un
+        # entraînement attend ou tourne encore.
+        oublier_run()
+
         # La configuration est transmise à l'étape suivante, et le format
         # de patches choisi ici devient celui du parcours
         st.session_state[etat.CONFIG] = config
