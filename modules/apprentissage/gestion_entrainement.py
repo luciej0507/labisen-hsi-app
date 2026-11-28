@@ -273,6 +273,34 @@ def lire_log(dossier, nb_lignes: int = 20) -> str:
         return ""
     return "\n".join(texte.splitlines()[-nb_lignes:])
 
+# Marqueurs des lignes écrites par le script d'entraînement. Les autres lignes
+# (avertissements des bibliothèques, traceback...) sont masquées dans la vue épurée.
+MARQUEURS_JOURNAL = ("[INFO]", "[WARN]", "[ERREUR]", "[Epoch")
+
+
+def lire_log_filtre(dossier, nb_lignes: int = 20) -> str:
+    """
+    Renvoie les dernières lignes utiles du journal de l'entraînement.
+
+    Seules les lignes écrites par le script d'entraînement sont gardées
+    (étapes, époques, enregistrements MLflow, erreurs).
+
+    Renvoie un texte vide si le dossier est None (job pas encore démarré)
+    ou si le journal n'existe pas.
+    """
+    if dossier is None:
+        return ""
+    try:
+        texte = (Path(dossier) / "train.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+    # On garde une ligne seulement si elle contient l'un des marqueurs
+    lignes_utiles = []
+    for ligne in texte.splitlines():
+        if any(marqueur in ligne for marqueur in MARQUEURS_JOURNAL):
+            lignes_utiles.append(ligne)
+    return "\n".join(lignes_utiles[-nb_lignes:])
 
 # ---------------------------------------------------------------------------
 # Arrêt

@@ -29,6 +29,7 @@ from modules.apprentissage.gestion_entrainement import (
     arreter_entrainement,
     lancer_entrainement,
     lire_log,
+    lire_log_filtre,
     lire_run_en_cours,
     oublier_run,
 )
@@ -482,12 +483,29 @@ def suivi_entrainement(etait_actif):
         with onglet_courbe:
             historique = statut.get("historique_loss", [])
             if len(historique) >= 2:
-                st.line_chart(pd.DataFrame({"loss": historique}))
+                # Un tableau avec le numéro de chaque époque (à partir de 1) et sa loss
+                courbe = pd.DataFrame({
+                    "Époque": range(1, len(historique) + 1),
+                    "Loss": historique,
+                })
+                st.line_chart(
+                    courbe,
+                    x="Époque",
+                    y="Loss",
+                    x_label="Époque",
+                    y_label="Loss",
+                )
             else:
                 st.caption("La courbe apparaît à partir de la deuxième époque.")
         with onglet_journal:
-            st.code(lire_log(run["dossier"]) or "Aucune sortie pour le moment.", language=None)
+            # Vue épurée : uniquement les lignes écrites par le script d'entraînement
+            journal = lire_log_filtre(run["dossier"])
+            st.code(journal or "Aucune sortie pour le moment.", language=None)
 
+            # Journal brut (avertissements, traceback) pour le dépannage
+            with st.expander("Journal complet"):
+                brut = lire_log(run["dossier"], nb_lignes=60)
+                st.code(brut or "Aucune sortie pour le moment.", language=None)
     with droite:
         tuile_mlflow(url_mlflow(statut))
         if actif:
