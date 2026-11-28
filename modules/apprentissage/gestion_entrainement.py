@@ -203,29 +203,11 @@ def lancer_entrainement(dataset, config: dict, gpu: int, utilisateur=None):
 # Suivi
 # ---------------------------------------------------------------------------
 
-def lire_run_en_cours():
+def construire_run(job: dict) -> dict:
     """
-    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y
-    en a pas (ou si l'utilisateur l'a retiré avec oublier_run).
-
-    Dictionnaire renvoyé :
-        job_id        : identifiant du job dans MongoDB
-        pid           : numéro du processus (côté worker)
-        dossier       : dossier du run, ou None tant que le worker n'a pas
-                        démarré le job
-        vivant        : True si l'entraînement attend ou tourne
-        en_attente    : True tant que le worker n'a pas démarré le job
-        arret_demande : True si l'utilisateur a demandé l'arrêt
-        etat_job      : état du job dans MongoDB
-        statut        : contenu de status.json, complété avec l'état du job
-        config        : contenu de config.json (ou la configuration demandée
-                        si le run n'a pas encore démarré)
+    Prépare le dictionnaire décrit dans lire_run_en_cours à partir d'un job
+    de la base (le job en cours, ou un ancien job pour l'historique).
     """
-    jobs = get_jobs_collection()
-    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
-    if job is None or job.get("masque"):
-        return None
-
     etat = job["etat"]
     dossier = Path(job["dossier"]) if job.get("dossier") else None
 
@@ -255,6 +237,31 @@ def lire_run_en_cours():
     }
 
 
+def lire_run_en_cours():
+    """
+    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y
+    en a pas (ou si l'utilisateur l'a retiré avec oublier_run).
+
+    Dictionnaire renvoyé :
+        job_id        : identifiant du job dans MongoDB
+        pid           : numéro du processus (côté worker)
+        dossier       : dossier du run, ou None tant que le worker n'a pas
+                        démarré le job
+        vivant        : True si l'entraînement attend ou tourne
+        en_attente    : True tant que le worker n'a pas démarré le job
+        arret_demande : True si l'utilisateur a demandé l'arrêt
+        etat_job      : état du job dans MongoDB
+        statut        : contenu de status.json, complété avec l'état du job
+        config        : contenu de config.json (ou la configuration demandée
+                        si le run n'a pas encore démarré)
+    """
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
+    if job is None or job.get("masque"):
+        return None
+    return construire_run(job)
+
+
 def lire_log(dossier, nb_lignes: int = 20) -> str:
     """
     Renvoie les dernières lignes du journal de l'entraînement.
@@ -273,6 +280,40 @@ def lire_log(dossier, nb_lignes: int = 20) -> str:
         return ""
     return "\n".join(texte.splitlines()[-nb_lignes:])
 
+# Marqueurs des lignes écrites par le script d'entraînement. Les autres lignes
+# (avertissements des bibliothèques, traceback...) sont masquées dans la vue épurée.
+MARQUEURS_JOURNAL = ("[INFO]", "[WARN]", "[ERREUR]", "[Epoch")
+
+
+def lire_log_filtre(dossier, nb_lignes: int = 20, arret_demande: bool = False) -> str:
+    """
+    Renvoie les dernières lignes utiles du journal de l'entraînement.
+
+    Seules les lignes écrites par le script d'entraînement sont gardées
+    (étapes, époques, enregistrements MLflow, erreurs).
+
+    Si arret_demande vaut True, la ligne d'erreur provoquée par l'arrêt
+    est remplacée par un message simple.
+
+    Renvoie un texte vide si le dossier est None (job pas encore démarré)
+    ou si le journal n'existe pas.
+    """
+    if dossier is None:
+        return ""
+    try:
+        texte = (Path(dossier) / "train.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+    # On garde une ligne seulement si elle contient l'un des marqueurs
+    lignes_utiles = []
+    for ligne in texte.splitlines():
+        if any(marqueur in ligne for marqueur in MARQUEURS_JOURNAL):
+            if arret_demande and "[ERREUR]" in ligne:
+                # On garde ce qui précède le marqueur (l'heure) et on change le texte
+                ligne = ligne.split("[ERREUR]")[0] + "[INFO] Arrêt demandé par l'utilisateur"
+            lignes_utiles.append(ligne)
+    return "\n".join(lignes_utiles[-nb_lignes:])
 
 # ---------------------------------------------------------------------------
 # Arrêt

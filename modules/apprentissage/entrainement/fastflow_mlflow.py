@@ -44,6 +44,10 @@ def parse_args():
                         help="Dossier du run (contient config.json)")
     return parser.parse_args()
 
+def ecrire_journal(message: str):
+    """Écrit une ligne dans le journal, précédée de l'heure (ex. : [11:34:27] [INFO] ...)."""
+    heure = datetime.now().strftime("%H:%M:%S")
+    print(f"[{heure}] {message}", flush=True)
 
 def write_status(status_file: Path, **kwargs):
     """Écrit l'état courant de l'entraînement dans un fichier JSON lu par Streamlit."""
@@ -54,7 +58,7 @@ def write_status(status_file: Path, **kwargs):
         temporaire.write_text(json.dumps(payload))
         os.replace(temporaire, status_file)
     except Exception as e:
-        print(f"[WARN] Impossible d'écrire le status file : {e}", flush=True)
+        ecrire_journal(f"[WARN] Impossible d'écrire le status file : {e}")
 
 
 def preparer_csv(chemin, labels, racine_patches, sortie: Path) -> Path:
@@ -100,11 +104,11 @@ class EpochLogger(Callback):
         epoch = trainer.current_epoch + 1
         total = trainer.max_epochs
         if loss != "N/A":
-            print(f"[Epoch {epoch}/{total}] train_loss = {loss:.4f}", flush=True)
+            ecrire_journal(f"[Epoch {epoch}/{total}] train_loss = {loss:.4f}")
             loss_value = float(loss)
             INFOS_FIXES["historique_loss"].append(loss_value)
         else:
-            print(f"[Epoch {epoch}/{total}] train_loss = N/A", flush=True)
+            ecrire_journal(f"[Epoch {epoch}/{total}] train_loss = N/A")
             loss_value = None
 
         write_status(self.status_file, state="running", epoch=epoch,
@@ -127,9 +131,9 @@ class EpochLogger(Callback):
                         # (et donc la libération du GPU).
                         await_registration_for=10,
                     )
-                    print(f"[INFO] Nouveau meilleur modèle loggé dans MLflow (loss={current_best:.4f})", flush=True)
+                    ecrire_journal(f"[INFO] Nouveau meilleur modèle loggé dans MLflow (loss={current_best:.4f})")
                 except Exception as e:
-                    print(f"[WARN] Échec du log du meilleur modèle : {e}", flush=True)
+                    ecrire_journal(f"[WARN] Échec du log du meilleur modèle : {e}")
 
 
 def main():
@@ -146,7 +150,7 @@ def main():
         generaux = config["parametres_generaux"]
 
         # --- CSV : on ne garde que les labels retenus (0 en non supervisé) ---
-        print("[INFO] Préparation des CSV...", flush=True)
+        ecrire_journal("[INFO] Préparation des CSV...")
         dossier_csv = dossier / "csv"
         dossier_csv.mkdir(exist_ok=True)
         labels = config["labels_retenus"]
@@ -206,7 +210,7 @@ def main():
         write_status(status_file, state="starting")
 
         # --- DataModule ---
-        print("[INFO] Chargement des datasets...", flush=True)
+        ecrire_journal("[INFO] Chargement des datasets...")
         datamodule = HSIDataModule(
             train_csv=train_csv,
             test_csv=test_csv,
@@ -216,7 +220,7 @@ def main():
         )
 
         # --- Modèle : les hyperparamètres choisis dans l'application ---
-        print("[INFO] Chargement du modèle FastFlow...", flush=True)
+        ecrire_journal("[INFO] Chargement du modèle FastFlow...")
         model = Fastflow(**hyperparametres, visualizer=False)
         model.evaluator = Evaluator(val_metrics=[], test_metrics=[])
 
@@ -259,14 +263,14 @@ def main():
         mlflow_logger.experiment.log_artifact(mlflow_logger.run_id, str(dossier / "config.json"))
 
         # --- Entraînement ---
-        print(f"[INFO] Démarrage de l'entraînement : {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}", flush=True)
+        ecrire_journal("[INFO] Démarrage de l'entraînement")
         engine.fit(model=model, datamodule=datamodule)
-        print(f"[INFO] Entraînement terminé avec succès ! {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}", flush=True)
+        ecrire_journal("[INFO] Entraînement terminé avec succès !")
 
         best_ckpt = checkpoint_callback.best_model_path
         if best_ckpt:
             mlflow_logger.experiment.log_artifact(mlflow_logger.run_id, best_ckpt)
-            print(f"[INFO] Checkpoint loggé dans MLflow : {best_ckpt}", flush=True)
+            ecrire_journal(f"[INFO] Checkpoint loggé dans MLflow : {best_ckpt}")
 
         mlflow_logger.finalize("success")
         write_status(status_file, state="done", epoch=generaux["epochs"],
@@ -274,8 +278,20 @@ def main():
                      loss=(INFOS_FIXES["historique_loss"] or [None])[-1])
 
     except Exception as e:
-        print(f"[ERREUR] Problème pendant l'entraînement : {e}", flush=True)
-        write_status(status_file, state="error", message=str(e))
+        ecrire_journal(f"[ERREUR] {type(e).__name__} : {e}")
+        # Époque et loss atteintes avant l'arrêt, pour que Streamlit les affiche
+        # (le nombre de valeurs de l'historique est le nombre d'époques terminées)
+        historique = INFOS_FIXES.get("historique_loss", [])
+        total_epochs = config.get("parametres_generaux", {}).get("epochs")
+        write_status(
+            status_file,
+            state="error",
+            message=str(e),
+            epoch=len(historique),
+            total_epochs=total_epochs,
+            loss=historique[-1] if historique else None,
+        )
+
         # Clôturer le run (statut FAILED) pour ne pas laisser un run "orphelin"
         # affiché comme actif dans l'UI MLflow
         try:

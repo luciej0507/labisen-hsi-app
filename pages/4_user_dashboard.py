@@ -7,6 +7,7 @@ Apprentissage) sont dans les pages 4a, 4b et 4c.
 import streamlit as st
 
 from modules.comptes.auth import require_role
+from ui.accueil_user import afficher_accueil
 from ui.sidebar import render_sidebar
 from ui.topnav import configurer_page, render_topnav
 
@@ -20,5 +21,4 @@ require_role("user")
 # Menu latéral (après require_role pour ne pas l'afficher aux non autorisés).
 render_sidebar("Accueil")
 
-st.title("Mon Espace")
-st.write("En projet")
+afficher_accueil()
