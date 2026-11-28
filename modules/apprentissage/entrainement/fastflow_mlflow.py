@@ -279,7 +279,19 @@ def main():
 
     except Exception as e:
         ecrire_journal(f"[ERREUR] {type(e).__name__} : {e}")
-        write_status(status_file, state="error", message=str(e))
+        # Époque et loss atteintes avant l'arrêt, pour que Streamlit les affiche
+        # (le nombre de valeurs de l'historique est le nombre d'époques terminées)
+        historique = INFOS_FIXES.get("historique_loss", [])
+        total_epochs = config.get("parametres_generaux", {}).get("epochs")
+        write_status(
+            status_file,
+            state="error",
+            message=str(e),
+            epoch=len(historique),
+            total_epochs=total_epochs,
+            loss=historique[-1] if historique else None,
+        )
+
         # Clôturer le run (statut FAILED) pour ne pas laisser un run "orphelin"
         # affiché comme actif dans l'UI MLflow
         try:

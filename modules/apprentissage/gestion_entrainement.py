@@ -278,12 +278,15 @@ def lire_log(dossier, nb_lignes: int = 20) -> str:
 MARQUEURS_JOURNAL = ("[INFO]", "[WARN]", "[ERREUR]", "[Epoch")
 
 
-def lire_log_filtre(dossier, nb_lignes: int = 20) -> str:
+def lire_log_filtre(dossier, nb_lignes: int = 20, arret_demande: bool = False) -> str:
     """
     Renvoie les dernières lignes utiles du journal de l'entraînement.
 
     Seules les lignes écrites par le script d'entraînement sont gardées
     (étapes, époques, enregistrements MLflow, erreurs).
+
+    Si arret_demande vaut True, la ligne d'erreur provoquée par l'arrêt
+    est remplacée par un message simple.
 
     Renvoie un texte vide si le dossier est None (job pas encore démarré)
     ou si le journal n'existe pas.
@@ -299,6 +302,9 @@ def lire_log_filtre(dossier, nb_lignes: int = 20) -> str:
     lignes_utiles = []
     for ligne in texte.splitlines():
         if any(marqueur in ligne for marqueur in MARQUEURS_JOURNAL):
+            if arret_demande and "[ERREUR]" in ligne:
+                # On garde ce qui précède le marqueur (l'heure) et on change le texte
+                ligne = ligne.split("[ERREUR]")[0] + "[INFO] Arrêt demandé par l'utilisateur"
             lignes_utiles.append(ligne)
     return "\n".join(lignes_utiles[-nb_lignes:])
 

@@ -142,9 +142,13 @@ def gpu_recommande(gpus):
     moins_charge = min(gpus, key=lambda g: (g["utilisation"], g["memoire_utilisee"]))
     return moins_charge["index"]
 
+def html_carte_gpu(gpu, recommande, suivi=False):
+    """
+    Construit le HTML d'une carte GPU : nom, état, donut d'utilisation, barre de mémoire.
 
-def html_carte_gpu(gpu, recommande):
-    """Construit le HTML d'une carte GPU : nom, état, donut d'utilisation, barre de mémoire."""
+    Si suivi vaut True (carte affichée pendant un entraînement), le libellé
+    "Libre / Modéré / Chargé" est masqué et la carte indique "Cet entraînement".
+    """
     utilisation = gpu["utilisation"]
     libelle, couleur_texte, couleur = etat_gpu(utilisation)
 
@@ -153,10 +157,18 @@ def html_carte_gpu(gpu, recommande):
     part_memoire = round(100 * gpu["memoire_utilisee"] / totale) if totale else 0
     couleur_memoire = etat_gpu(part_memoire)[2]
 
-    # Espace insécable quand le GPU n'est pas recommandé : toutes les cartes
-    # gardent ainsi la même hauteur
-    texte_reco = "Recommandé" if recommande else "&nbsp;"
-    
+    if suivi:
+        # Pendant un entraînement, le GPU est normalement "Chargé" : on ne l'écrit pas
+        texte_reco = "Cet entraînement"
+        badge_etat = ""
+    else:
+        # Espace insécable quand le GPU n'est pas recommandé : toutes les cartes
+        # gardent ainsi la même hauteur
+        texte_reco = "Recommandé" if recommande else "&nbsp;"
+        badge_etat = (
+            f'<span class="gpu-etat" style="--t:{couleur_texte}; --c:{couleur}">{libelle}</span>'
+        )
+
     # Température en texte simple ("-" si le GPU ne la communique pas)
     temperature = gpu.get("temperature")
     texte_temperature = f"{temperature} °C" if temperature is not None else "-"
@@ -166,7 +178,7 @@ def html_carte_gpu(gpu, recommande):
     return (
         '<div class="gpu-entete">'
         f'<span class="gpu-nom">GPU {gpu["index"]}</span>'
-        f'<span class="gpu-etat" style="--t:{couleur_texte}; --c:{couleur}">{libelle}</span>'
+        f"{badge_etat}"
         "</div>"
         f'<div class="gpu-reco">{texte_reco}</div>'
         f'<div class="gpu-donut" style="--p:{utilisation}; --c:{couleur}">'
@@ -202,6 +214,23 @@ def carte_gpu(gpu, choisi, recommande):
             type="primary" if choisi else "secondary",
             width="stretch",
         )
+        
+def carte_gpu_entrainement(index_gpu):
+    """Affiche l'état en temps réel du GPU utilisé par l'entraînement (sans bouton de choix)."""
+    # Le numéro du GPU n'est connu que lorsque le run a démarré
+    if index_gpu is None:
+        return
+
+    # Relevé publié par le worker, puis recherche du GPU de l'entraînement
+    releve = lire_etat_gpus()
+    gpu = next((g for g in releve["gpus"] if g["index"] == index_gpu), None)
+    if not releve["worker_actif"] or gpu is None:
+        st.caption("État du GPU indisponible pour le moment.")
+        return
+
+    # La clé du conteneur donne la classe CSS de la carte (bordure rouge)
+    with st.container(key=f"gpu-carte-{index_gpu}"):
+        st.markdown(html_carte_gpu(gpu, False, suivi=True), unsafe_allow_html=True)
 
 
 @st.fragment(run_every=INTERVALLE_GPUS)
@@ -401,7 +430,7 @@ def messages_etat(run, etat_run, actif):
     elif etat_run == "demarrage":
         st.info("Démarrage : chargement des bibliothèques, des données et du modèle...")
     elif etat_run == "arrete":
-        st.warning("Entraînement arrêté. Le GPU est libéré.")
+        st.warning("Entraînement arrêté à votre demande. Le GPU est libéré.")
     elif etat_run == "erreur":
         message = run["statut"].get("message") or (
             "Le processus s'est arrêté de façon inattendue. Consultez le journal."
@@ -418,22 +447,19 @@ def messages_etat(run, etat_run, actif):
         )
 
 
-def bandeau_chiffres(run, statut):
-    """Trois chiffres clés sur une ligne : époque, loss et GPU utilisé."""
+def bandeau_chiffres(statut):
+    """Deux chiffres clés sur une ligne : époque et loss."""
     total = statut.get("total_epochs")
     epoque = statut.get("epoch", 0)
     loss = statut.get("loss")
-    # Le numéro du GPU est écrit dans config.json dès que le run a démarré
-    gpu = run["config"].get("gpu")
 
-    colonne_epoque, colonne_loss, colonne_gpu = st.columns(3)
+    colonne_epoque, colonne_loss = st.columns(2)
     colonne_epoque.metric(
         "Époque", f"{epoque} / {total}" if total else "-", border=True
     )
     colonne_loss.metric(
         "Loss (dernière époque)", f"{loss:.4f}" if loss is not None else "-", border=True
     )
-    colonne_gpu.metric("GPU", f"GPU {gpu}" if gpu is not None else "-", border=True)
 
 
 def barre_progression(statut):
@@ -472,7 +498,7 @@ def suivi_entrainement(etait_actif):
     # --- Haut de page : état, messages, chiffres clés, progression ---
     entete(run, etat_run)
     messages_etat(run, etat_run, actif)
-    bandeau_chiffres(run, statut)
+    bandeau_chiffres(statut)
     barre_progression(statut)
 
     # --- Corps : à gauche courbe et journal, à droite MLflow et actions ---
@@ -499,7 +525,7 @@ def suivi_entrainement(etait_actif):
                 st.caption("La courbe apparaît à partir de la deuxième époque.")
         with onglet_journal:
             # Vue épurée : uniquement les lignes écrites par le script d'entraînement
-            journal = lire_log_filtre(run["dossier"])
+            journal = lire_log_filtre(run["dossier"], arret_demande=run["arret_demande"])
             st.code(journal or "Aucune sortie pour le moment.", language=None)
 
             # Journal brut (avertissements, traceback) pour le dépannage
@@ -507,6 +533,9 @@ def suivi_entrainement(etait_actif):
                 brut = lire_log(run["dossier"], nb_lignes=60)
                 st.code(brut or "Aucune sortie pour le moment.", language=None)
     with droite:
+        # État en temps réel du GPU de l'entraînement (tant qu'il est actif)
+        if actif:
+            carte_gpu_entrainement(run["config"].get("gpu"))
         tuile_mlflow(url_mlflow(statut))
         if actif:
             # Une fois l'arrêt demandé, le bouton d'arrêt n'a plus lieu d'être

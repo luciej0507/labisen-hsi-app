@@ -119,7 +119,8 @@ def etat_du_run(run: dict) -> str:
     Renvoie l'état d'un entraînement : demarrage, en_cours, termine, arrete ou erreur.
 
     Si le processus a disparu sans écrire d'état final (plantage, arrêt
-    depuis le terminal), l'entraînement est considéré en erreur.
+    depuis le terminal), l'entraînement est considéré en erreur, sauf si
+    l'utilisateur avait demandé l'arrêt : dans ce cas il est considéré arrêté.
     """
     etat = run["statut"].get("state")
     if etat == "done":
@@ -127,6 +128,10 @@ def etat_du_run(run: dict) -> str:
     if etat == "stopped":
         return "arrete"
     if etat == "error" or not run["vivant"]:
+        # Un arrêt demandé par l'utilisateur fait planter le script, mais
+        # ce n'est pas une vraie erreur
+        if run["arret_demande"]:
+            return "arrete"
         return "erreur"
     return "en_cours" if etat == "running" else "demarrage"
 
