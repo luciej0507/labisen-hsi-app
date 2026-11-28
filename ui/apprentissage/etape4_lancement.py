@@ -505,7 +505,7 @@ def suivi_entrainement(etait_actif):
     gauche, droite = st.columns([2, 1])
 
     with gauche:
-        onglet_courbe, onglet_journal = st.tabs(["Courbe de loss", "Journal"])
+        onglet_journal, onglet_courbe = st.tabs(["Journal", "Courbe de loss"])
         with onglet_courbe:
             historique = statut.get("historique_loss", [])
             if len(historique) >= 2:

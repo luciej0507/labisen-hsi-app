@@ -203,29 +203,11 @@ def lancer_entrainement(dataset, config: dict, gpu: int, utilisateur=None):
 # Suivi
 # ---------------------------------------------------------------------------
 
-def lire_run_en_cours():
+def construire_run(job: dict) -> dict:
     """
-    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y
-    en a pas (ou si l'utilisateur l'a retiré avec oublier_run).
-
-    Dictionnaire renvoyé :
-        job_id        : identifiant du job dans MongoDB
-        pid           : numéro du processus (côté worker)
-        dossier       : dossier du run, ou None tant que le worker n'a pas
-                        démarré le job
-        vivant        : True si l'entraînement attend ou tourne
-        en_attente    : True tant que le worker n'a pas démarré le job
-        arret_demande : True si l'utilisateur a demandé l'arrêt
-        etat_job      : état du job dans MongoDB
-        statut        : contenu de status.json, complété avec l'état du job
-        config        : contenu de config.json (ou la configuration demandée
-                        si le run n'a pas encore démarré)
+    Prépare le dictionnaire décrit dans lire_run_en_cours à partir d'un job
+    de la base (le job en cours, ou un ancien job pour l'historique).
     """
-    jobs = get_jobs_collection()
-    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
-    if job is None or job.get("masque"):
-        return None
-
     etat = job["etat"]
     dossier = Path(job["dossier"]) if job.get("dossier") else None
 
@@ -253,6 +235,31 @@ def lire_run_en_cours():
         "statut": statut,
         "config": config,
     }
+
+
+def lire_run_en_cours():
+    """
+    Renvoie les informations du dernier entraînement lancé, ou None s'il n'y
+    en a pas (ou si l'utilisateur l'a retiré avec oublier_run).
+
+    Dictionnaire renvoyé :
+        job_id        : identifiant du job dans MongoDB
+        pid           : numéro du processus (côté worker)
+        dossier       : dossier du run, ou None tant que le worker n'a pas
+                        démarré le job
+        vivant        : True si l'entraînement attend ou tourne
+        en_attente    : True tant que le worker n'a pas démarré le job
+        arret_demande : True si l'utilisateur a demandé l'arrêt
+        etat_job      : état du job dans MongoDB
+        statut        : contenu de status.json, complété avec l'état du job
+        config        : contenu de config.json (ou la configuration demandée
+                        si le run n'a pas encore démarré)
+    """
+    jobs = get_jobs_collection()
+    job = dernier_job(jobs, TYPE_ENTRAINEMENT)
+    if job is None or job.get("masque"):
+        return None
+    return construire_run(job)
 
 
 def lire_log(dossier, nb_lignes: int = 20) -> str:

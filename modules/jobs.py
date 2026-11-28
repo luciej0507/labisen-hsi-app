@@ -194,19 +194,22 @@ def existe_job_actif(jobs, type_job: str, cle=None) -> bool:
     return jobs.count_documents(filtre, limit=1) > 0
 
 
-def lister_jobs(jobs, type_job=None, etats=None, limite: int = 50) -> list:
+def lister_jobs(jobs, type_job=None, etats=None, limite: int = 50, utilisateur=None) -> list:
     """
     Renvoie les jobs les plus récents en premier.
 
-    type_job : ne garder que ce type (facultatif)
-    etats    : ne garder que ces états, par exemple (EN_COURS,) (facultatif)
-    limite   : nombre maximum de jobs renvoyés
+    type_job    : ne garder que ce type (facultatif)
+    etats       : ne garder que ces états, par exemple (EN_COURS,) (facultatif)
+    limite      : nombre maximum de jobs renvoyés
+    utilisateur : ne garder que les jobs de cet utilisateur (facultatif)
     """
     filtre = {}
     if type_job is not None:
         filtre["type"] = type_job
     if etats is not None:
         filtre["etat"] = {"$in": list(etats)}
+    if utilisateur is not None:
+        filtre["utilisateur"] = utilisateur
     curseur = jobs.find(filtre).sort([("cree_le", DESCENDING), ("_id", DESCENDING)])
     return list(curseur.limit(limite))
 
