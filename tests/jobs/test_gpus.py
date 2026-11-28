@@ -20,7 +20,7 @@ from modules import etat_gpus
 from modules import jobs as file_jobs
 from modules.apprentissage import etape_lancement_suivi, etape_patching
 
-SORTIE_DEUX_GPU = "0, 12, 2048, 24576\n1, 87, 20480, 24576\n"
+SORTIE_DEUX_GPU = "0, 12, 2048, 24576, 45\n1, 87, 20480, 24576, 72\n"
 
 
 @pytest.fixture
@@ -34,12 +34,14 @@ def etat(jobs):
 # ---------------------------------------------------------------------------
 
 def test_analyser_la_sortie_convertit_les_mo_en_go():
-    """Chaque ligne devient un GPU, avec la mémoire en Go."""
+    """Chaque ligne devient un GPU, avec la mémoire en Go et la température en °C."""
     gpus = etat_gpus.analyser_sortie_nvidia_smi(SORTIE_DEUX_GPU)
 
     assert gpus == [
-        {"index": 0, "utilisation": 12, "memoire_utilisee": 2.0, "memoire_totale": 24.0},
-        {"index": 1, "utilisation": 87, "memoire_utilisee": 20.0, "memoire_totale": 24.0},
+        {"index": 0, "utilisation": 12, "memoire_utilisee": 2.0,
+         "memoire_totale": 24.0, "temperature": 45},
+        {"index": 1, "utilisation": 87, "memoire_utilisee": 20.0,
+         "memoire_totale": 24.0, "temperature": 72},
     ]
 
 
@@ -53,8 +55,11 @@ def test_analyser_une_ligne_mal_formee_leve_une_erreur():
     """Une ligne incomplète ou illisible n'est pas ignorée en silence."""
     with pytest.raises(ValueError):
         etat_gpus.analyser_sortie_nvidia_smi("0, 12, 2048")
+    # Ancien format sans la température : il manque une colonne
     with pytest.raises(ValueError):
-        etat_gpus.analyser_sortie_nvidia_smi("zero, douze, beaucoup, enormement")
+        etat_gpus.analyser_sortie_nvidia_smi("0, 12, 2048, 24576")
+    with pytest.raises(ValueError):
+        etat_gpus.analyser_sortie_nvidia_smi("zero, douze, beaucoup, enormement, chaud")
 
 
 def test_interroger_gpus_lit_la_sortie_de_nvidia_smi(monkeypatch):
@@ -70,7 +75,10 @@ def test_interroger_gpus_lit_la_sortie_de_nvidia_smi(monkeypatch):
     gpus = etat_gpus.interroger_gpus()
 
     assert [g["index"] for g in gpus] == [0, 1]
+    assert [g["temperature"] for g in gpus] == [45, 72]
     assert appels[0][0] == "nvidia-smi"
+    # La commande demande bien la température
+    assert "temperature.gpu" in appels[0][1]
 
 
 def test_interroger_gpus_sans_nvidia_smi_renvoie_une_liste_vide(monkeypatch):
@@ -105,13 +113,22 @@ def test_interroger_gpus_sortie_illisible_renvoie_une_liste_vide(monkeypatch):
     )
 
     assert etat_gpus.interroger_gpus() == []
+    
+    
+def test_analyser_une_temperature_inconnue_donne_none():
+    """Si le GPU ne donne pas sa température, on garde None et le GPU est conservé."""
+    gpus = etat_gpus.analyser_sortie_nvidia_smi("0, 12, 2048, 24576, [N/A]")
+
+    assert gpus[0]["temperature"] is None
+    assert gpus[0]["index"] == 0
 
 
 # ---------------------------------------------------------------------------
 # Publication et lecture
 # ---------------------------------------------------------------------------
 
-GPUS = [{"index": 0, "utilisation": 12, "memoire_utilisee": 2.0, "memoire_totale": 24.0}]
+GPUS = [{"index": 0, "utilisation": 12, "memoire_utilisee": 2.0,
+         "memoire_totale": 24.0, "temperature": 45}]
 
 
 def test_lire_sans_publication_le_worker_est_inactif(etat):
@@ -179,7 +196,7 @@ def test_l_interface_lit_l_etat_publie(etat, monkeypatch):
     assert releve["gpus"] == GPUS
     assert releve["worker_actif"] is True
     # Les lignes du tableau et le libellé du choix restent ceux de l'étape 4
-    assert etape_lancement_suivi.lignes_gpus(releve["gpus"])[0]["Mémoire totale (Go)"] == 24.0
+    assert etape_lancement_suivi.lignes_gpus(releve["gpus"])[0]["Température (°C)"] == 45
     assert etape_lancement_suivi.libelle_gpu(releve["gpus"][0]) == "GPU 0 (12 % utilisé)"
 
 

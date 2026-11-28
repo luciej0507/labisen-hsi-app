@@ -35,8 +35,9 @@ def lire_etat_gpus() -> dict:
     modules/etat_gpus.py).
 
     Dictionnaire renvoyé :
-        gpus         : liste des GPU, avec la mémoire en Go (vide si aucun
-                       GPU n'est détecté ou si le worker est arrêté)
+        gpus         : liste des GPU, avec la mémoire en Go et la température
+                    en °C (vide si aucun GPU n'est détecté ou si le worker
+                    est arrêté)
         worker_actif : False si le worker ne publie plus rien
         age_secondes : ancienneté du relevé, en secondes (None s'il n'y en a pas)
     """
@@ -51,6 +52,8 @@ def lignes_gpus(gpus: list) -> list:
             "Utilisation (%)": g["utilisation"],
             "Mémoire utilisée (Go)": g["memoire_utilisee"],
             "Mémoire totale (Go)": g["memoire_totale"],
+            # None si le GPU ne communique pas sa température
+            "Température (°C)": g.get("temperature"),
         }
         for g in gpus
     ]

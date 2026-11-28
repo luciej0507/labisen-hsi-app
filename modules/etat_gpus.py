@@ -49,18 +49,30 @@ def analyser_sortie_nvidia_smi(sortie: str) -> list:
     Transforme la sortie de nvidia-smi en liste de GPU.
 
     Chaque ligne a la forme "index, utilisation, mémoire utilisée, mémoire
-    totale", avec les mémoires en Mo. Par exemple : "1, 87, 20480, 24576".
+    totale, température", avec les mémoires en Mo et la température en °C.
+    Par exemple : "1, 87, 20480, 24576, 65".
     Les mémoires sont converties en Go. Lève ValueError si une ligne est
     mal formée.
     """
     gpus = []
     for ligne in sortie.strip().splitlines():
-        index, utilisation, utilisee, totale = [v.strip() for v in ligne.split(",")]
+        index, utilisation, utilisee, totale, temperature = [
+            v.strip() for v in ligne.split(",")
+        ]
+
+        # Certains GPU ne donnent pas leur température (nvidia-smi écrit
+        # alors "[N/A]") : on garde None plutôt que de tout rejeter
+        try:
+            temperature = int(temperature)
+        except ValueError:
+            temperature = None
+
         gpus.append({
             "index": int(index),
             "utilisation": int(utilisation),
             "memoire_utilisee": round(float(utilisee) / 1024, 1),  # Mo -> Go
             "memoire_totale": round(float(totale) / 1024, 1),
+            "temperature": temperature,  # en °C (None si inconnue)
         })
     return gpus
 
@@ -76,7 +88,7 @@ def interroger_gpus() -> list:
         sortie = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=index,utilization.gpu,memory.used,memory.total",
+                "--query-gpu=index,utilization.gpu,memory.used,memory.total,temperature.gpu",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True, text=True, timeout=5, check=True,

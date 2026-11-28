@@ -65,6 +65,9 @@ GPU_PAR_LIGNE = 4
 # de 80 il est modéré, au delà il est chargé
 SEUIL_CHARGE = 80
 
+# Température (en °C) au delà de laquelle on déconseille d'utiliser le GPU
+SEUIL_TEMPERATURE = 85
+
 # Pour chaque état : (limite en %, libellé, couleur du texte, couleur de remplissage)
 ETATS_GPU = [
     (50, "Libre", "#1a7a45", "#1f9d55"),
@@ -152,6 +155,10 @@ def html_carte_gpu(gpu, recommande):
     # Espace insécable quand le GPU n'est pas recommandé : toutes les cartes
     # gardent ainsi la même hauteur
     texte_reco = "Recommandé" if recommande else "&nbsp;"
+    
+    # Température en texte simple ("-" si le GPU ne la communique pas)
+    temperature = gpu.get("temperature")
+    texte_temperature = f"{temperature} °C" if temperature is not None else "-"
 
     # Tout le HTML est sur une seule ligne : un retour à la ligne suivi
     # d'espaces serait pris pour du code par le Markdown
@@ -169,6 +176,8 @@ def html_carte_gpu(gpu, recommande):
         '<div class="gpu-barre">'
         f'<div style="width:{min(part_memoire, 100)}%; background:{couleur_memoire}"></div>'
         "</div>"
+        '<div class="gpu-memoire"><span>Température</span>'
+        f"<span>{texte_temperature}</span></div>"
     )
 
 
@@ -242,6 +251,15 @@ def section_serveur():
         st.warning(
             f"Le GPU {choisi} est déjà utilisé à {utilisation} % : "
             "l'entraînement risque d'être lent ou de manquer de mémoire."
+        )
+        
+    # Avertissement si le GPU choisi est trop chaud
+    temperature = next(g.get("temperature") for g in gpus if g["index"] == choisi)
+    if temperature is not None and temperature > SEUIL_TEMPERATURE:
+        st.warning(
+            f"Le GPU {choisi} est à {temperature} °C : au delà de "
+            f"{SEUIL_TEMPERATURE} °C, son utilisation est déconseillée. "
+            "Choisissez un autre GPU ou attendez qu'il refroidisse."
         )
 
     st.caption(
